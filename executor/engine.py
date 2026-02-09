@@ -31,27 +31,51 @@ logger = logging.getLogger(__name__)
 MAX_BATCH_SIZE = 15
 
 
+class UnwindFailed(Exception):
+    """Raised when partial fill unwind fails. Caller must log stuck positions."""
+    pass
+
+
 def execute_opportunity(
     client: ClobClient,
     opportunity: Opportunity,
     size: float,
     paper_trading: bool = False,
+    use_fak: bool = True,
+    order_timeout_sec: float = 5.0,
+    kalshi_client: object | None = None,
 ) -> TradeResult:
     """
     Execute an arbitrage opportunity. Places all leg orders, tracks fills.
     Returns a TradeResult with execution details.
 
     For paper trading, simulates execution without placing real orders.
+    use_fak: Use Fill-and-Kill orders instead of GTC (immediate fill or cancel).
+    order_timeout_sec: Max time to wait for GTC fills before cancelling (only if use_fak=False).
+    kalshi_client: Required for CROSS_PLATFORM_ARB execution (KalshiClient instance).
     """
     start_time = time.time()
+    order_type = OrderType.FAK if use_fak else OrderType.GTC
 
     if paper_trading:
         return _paper_execute(opportunity, size, start_time)
 
     if opportunity.type == OpportunityType.BINARY_REBALANCE:
-        return _execute_binary(client, opportunity, size, start_time)
+        return _execute_binary(client, opportunity, size, start_time, order_type, order_timeout_sec)
     elif opportunity.type == OpportunityType.NEGRISK_REBALANCE:
-        return _execute_negrisk(client, opportunity, size, start_time)
+        return _execute_negrisk(client, opportunity, size, start_time, order_type, order_timeout_sec)
+    elif opportunity.type == OpportunityType.LATENCY_ARB:
+        return _execute_single_leg(client, opportunity, size, start_time, order_type)
+    elif opportunity.type == OpportunityType.SPIKE_LAG:
+        return _execute_negrisk(client, opportunity, size, start_time, order_type, order_timeout_sec)
+    elif opportunity.type == OpportunityType.CROSS_PLATFORM_ARB:
+        from executor.cross_platform import execute_cross_platform
+        if kalshi_client is None:
+            raise ValueError("kalshi_client required for CROSS_PLATFORM_ARB execution")
+        return execute_cross_platform(
+            client, kalshi_client, opportunity, size,
+            paper_trading=False, use_fak=use_fak,
+        )
     else:
         raise ValueError(f"Unknown opportunity type: {opportunity.type}")
 
@@ -66,9 +90,7 @@ def _paper_execute(
 
     fill_prices = [leg.price for leg in opportunity.legs]
     fill_sizes = [size] * len(opportunity.legs)
-
-    cost_per_set = sum(leg.price for leg in opportunity.legs if leg.side == Side.BUY)
-    net_pnl = opportunity.expected_profit_per_set * size - opportunity.estimated_gas_cost
+    net_pnl = opportunity.net_profit_per_set * size - opportunity.estimated_gas_cost
 
     logger.info(
         "[PAPER] Executed %s: %d legs, size=%.1f, pnl=$%.2f",
@@ -93,6 +115,8 @@ def _execute_binary(
     opportunity: Opportunity,
     size: float,
     start_time: float,
+    order_type: OrderType = OrderType.FAK,
+    order_timeout_sec: float = 5.0,
 ) -> TradeResult:
     """
     Execute a binary rebalancing trade.
@@ -112,7 +136,7 @@ def _execute_binary(
             size=size,
             neg_risk=neg_risk,
         )
-        signed_orders.append((signed, OrderType.GTC))
+        signed_orders.append((signed, order_type))
 
     # Submit both as a batch
     responses = post_orders(client, signed_orders)
@@ -128,10 +152,28 @@ def _execute_binary(
         order_ids.append(oid)
 
         # Check fill status
-        status = resp.get("status", "")
-        if status == "matched" or status == "filled":
+        status = str(resp.get("status", ""))
+        is_partial = status.lower() == "partial"
+        filled = _order_is_filled(status)
+        if not filled and order_type == OrderType.GTC and not oid.startswith("unknown_"):
+            filled = _wait_for_fill(client, oid, order_timeout_sec)
+            if filled:
+                is_partial = False
+
+        if filled:
             fill_prices.append(opportunity.legs[i].price)
             fill_sizes.append(size)
+        elif is_partial:
+            partial_size = _filled_size_from_response(resp, requested_size=size)
+            if partial_size <= 0 and not oid.startswith("unknown_"):
+                partial_size = _fetch_filled_size(client, oid, requested_size=size)
+            if partial_size <= 0:
+                raise UnwindFailed(
+                    f"Order {oid} reported partial fill but matched size is unknown"
+                )
+            fill_prices.append(opportunity.legs[i].price if partial_size > 0 else 0.0)
+            fill_sizes.append(partial_size)
+            all_filled = False
         else:
             fill_prices.append(0.0)
             fill_sizes.append(0.0)
@@ -141,7 +183,7 @@ def _execute_binary(
 
     if not all_filled:
         logger.warning("Partial fill on binary arb, unwinding...")
-        _unwind_partial(client, order_ids, opportunity.legs, fill_sizes)
+        _unwind_partial(client, order_ids, opportunity.legs, fill_sizes, neg_risk=False)
 
     # Compute P&L
     total_cost = sum(fp * fs for fp, fs in zip(fill_prices, fill_sizes) if fs > 0)
@@ -171,6 +213,8 @@ def _execute_negrisk(
     opportunity: Opportunity,
     size: float,
     start_time: float,
+    order_type: OrderType = OrderType.FAK,
+    order_timeout_sec: float = 5.0,
 ) -> TradeResult:
     """
     Execute a NegRisk rebalancing trade.
@@ -190,7 +234,7 @@ def _execute_negrisk(
             size=size,
             neg_risk=True,
         )
-        signed_orders.append((signed, OrderType.GTC))
+        signed_orders.append((signed, order_type))
 
     # Submit in batches of MAX_BATCH_SIZE
     all_responses = []
@@ -209,10 +253,28 @@ def _execute_negrisk(
         oid = resp.get("orderID", resp.get("order_id", f"unknown_{i}"))
         order_ids.append(oid)
 
-        status = resp.get("status", "")
-        if status == "matched" or status == "filled":
+        status = str(resp.get("status", ""))
+        is_partial = status.lower() == "partial"
+        filled = _order_is_filled(status)
+        if not filled and order_type == OrderType.GTC and not oid.startswith("unknown_"):
+            filled = _wait_for_fill(client, oid, order_timeout_sec)
+            if filled:
+                is_partial = False
+
+        if filled:
             fill_prices.append(legs[i].price)
             fill_sizes.append(size)
+        elif is_partial:
+            partial_size = _filled_size_from_response(resp, requested_size=size)
+            if partial_size <= 0 and not oid.startswith("unknown_"):
+                partial_size = _fetch_filled_size(client, oid, requested_size=size)
+            if partial_size <= 0:
+                raise UnwindFailed(
+                    f"Order {oid} reported partial fill but matched size is unknown"
+                )
+            fill_prices.append(legs[i].price if partial_size > 0 else 0.0)
+            fill_sizes.append(partial_size)
+            all_filled = False
         else:
             fill_prices.append(0.0)
             fill_sizes.append(0.0)
@@ -223,7 +285,7 @@ def _execute_negrisk(
     if not all_filled:
         logger.warning("Partial fill on negrisk arb (%d/%d legs), unwinding...",
                        sum(1 for s in fill_sizes if s > 0), len(legs))
-        _unwind_partial(client, order_ids, legs, fill_sizes)
+        _unwind_partial(client, order_ids, legs, fill_sizes, neg_risk=True)
 
     total_cost = sum(fp * fs for fp, fs in zip(fill_prices, fill_sizes) if fs > 0)
     expected_payout = size if all_filled else 0  # $1 per set at resolution
@@ -247,17 +309,86 @@ def _execute_negrisk(
     )
 
 
+def _execute_single_leg(
+    client: ClobClient,
+    opportunity: Opportunity,
+    size: float,
+    start_time: float,
+    order_type: OrderType = OrderType.FAK,
+) -> TradeResult:
+    """
+    Execute a single-leg trade (latency arb, spike lag).
+    Places one order for the single leg.
+    """
+    assert len(opportunity.legs) == 1, f"Single-leg trade must have 1 leg, got {len(opportunity.legs)}"
+    leg = opportunity.legs[0]
+
+    signed = create_limit_order(
+        client,
+        token_id=leg.token_id,
+        side=leg.side,
+        price=leg.price,
+        size=size,
+        neg_risk=False,
+    )
+    resp = post_order(client, signed, order_type)
+
+    oid = resp.get("orderID", resp.get("order_id", "unknown_0"))
+    status = resp.get("status", "")
+    status_lower = str(status).lower()
+    filled = status_lower in ("matched", "filled")
+    partial = status_lower == "partial"
+
+    elapsed_ms = (time.time() - start_time) * 1000
+
+    if filled:
+        fill_size = size
+    elif partial:
+        fill_size = _filled_size_from_response(resp, requested_size=size)
+        if fill_size <= 0 and not oid.startswith("unknown_"):
+            fill_size = _fetch_filled_size(client, oid, requested_size=size)
+    else:
+        fill_size = 0.0
+
+    fill_price = leg.price if fill_size > 0 else 0.0
+    net_pnl = (
+        opportunity.net_profit_per_set * fill_size - opportunity.estimated_gas_cost
+        if fill_size > 0 else 0.0
+    )
+
+    logger.info(
+        "Single-leg execution: type=%s filled=%s order=%s elapsed=%.0fms pnl=$%.2f",
+        opportunity.type.value, filled and not partial, oid, elapsed_ms, net_pnl,
+    )
+
+    return TradeResult(
+        opportunity=opportunity,
+        order_ids=[oid],
+        fill_prices=[fill_price],
+        fill_sizes=[fill_size],
+        fees=0.0,
+        gas_cost=opportunity.estimated_gas_cost,
+        net_pnl=net_pnl,
+        execution_time_ms=elapsed_ms,
+        fully_filled=filled and not partial,
+    )
+
+
 def _unwind_partial(
     client: ClobClient,
     order_ids: list[str],
     legs: tuple[LegOrder, ...],
     fill_sizes: list[float],
+    neg_risk: bool,
 ) -> None:
     """
     Unwind a partially filled multi-leg trade.
     1. Cancel all unfilled orders.
     2. Market-sell any filled positions to minimize exposure.
+    Raises UnwindFailed if any unwind order fails -- caller must log stuck positions.
     """
+    stuck_positions: list[dict] = []
+
     for i, (oid, leg, filled) in enumerate(zip(order_ids, legs, fill_sizes)):
         if filled == 0:
             # Cancel unfilled order
@@ -275,9 +406,102 @@ def _unwind_partial(
                     token_id=leg.token_id,
                     side=opposite_side,
                     amount=filled,
-                    neg_risk=True,
+                    neg_risk=neg_risk,
                 )
                 resp = post_order(client, unwind_order, OrderType.FOK)
                 logger.info("Unwound position %s: %s", leg.token_id, resp)
             except Exception as e:
                 logger.error("Failed to unwind position %s: %s", leg.token_id, e)
+                stuck_positions.append({
+                    "token_id": leg.token_id,
+                    "side": leg.side.value,
+                    "size": filled,
+                    "error": str(e),
+                })
+
+    if stuck_positions:
+        raise UnwindFailed(
+            f"Failed to unwind {len(stuck_positions)} position(s): {stuck_positions}"
+        )
+
+
+def _order_is_filled(status: str) -> bool:
+    """Normalize CLOB order status values to a filled/not-filled boolean."""
+    return status.lower() in ("matched", "filled")
+
+
+def _filled_size_from_response(resp: dict, requested_size: float) -> float:
+    """
+    Best-effort extraction of filled size from an order response payload.
+    Returns 0.0 if no known filled-size field is present or parseable.
+    """
+    for key in (
+        "filled_size",
+        "filledSize",
+        "size_filled",
+        "sizeFilled",
+        "matched_size",
+        "matchedSize",
+        "size_matched",
+        "filled",
+        "fill_size",
+        "filledQuantity",
+        "quantity_filled",
+    ):
+        if key not in resp:
+            continue
+        try:
+            parsed = float(resp[key])
+        except (TypeError, ValueError):
+            continue
+        if parsed <= 0:
+            return 0.0
+        return min(parsed, requested_size)
+    return 0.0
+
+
+def _fetch_filled_size(client: ClobClient, order_id: str, requested_size: float) -> float:
+    """Query order status and extract matched size for partial fills."""
+    try:
+        resp = client.get_order(order_id) or {}
+    except Exception as e:
+        logger.warning("Failed to fetch filled size for %s: %s", order_id, e)
+        return 0.0
+    return _filled_size_from_response(resp, requested_size=requested_size)
+
+
+def _wait_for_fill(
+    client: ClobClient,
+    order_id: str,
+    timeout_sec: float,
+    poll_interval_sec: float = 0.1,
+) -> bool:
+    """
+    Poll order status until filled or timeout.
+    Used for GTC mode where orders may not be immediately matched.
+    """
+    if timeout_sec <= 0:
+        return False
+
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        try:
+            resp = client.get_order(order_id)
+            status = str((resp or {}).get("status", ""))
+        except Exception as e:
+            logger.warning("Order status poll failed for %s: %s", order_id, e)
+            return False
+
+        if _order_is_filled(status):
+            return True
+
+        # Terminal non-filled states.
+        if status.lower() in ("cancelled", "canceled", "expired", "rejected"):
+            return False
+
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            break
+        time.sleep(min(poll_interval_sec, remaining))
+
+    return False

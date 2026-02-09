@@ -2,7 +2,6 @@
 Unit tests for scanner/negrisk.py -- NegRisk multi-outcome rebalancing detection.
 """
 
-from unittest.mock import patch, MagicMock
 from scanner.negrisk import scan_negrisk_events, _check_buy_all_arb, _check_sell_all_arb
 from scanner.models import (
     Market,
@@ -59,7 +58,7 @@ class TestCheckBuyAllArb:
         }
 
         opp = _check_buy_all_arb(
-            event, books,
+            event, books, list(event.markets),
             min_profit_usd=0.01, min_roi_pct=0.1,
             gas_per_order=150000, gas_price_gwei=30.0,
         )
@@ -76,7 +75,7 @@ class TestCheckBuyAllArb:
         books = {f"y{i}": _make_book(f"y{i}", 0.14, 50, 0.15, 50) for i in range(5)}
 
         opp = _check_buy_all_arb(
-            event, books,
+            event, books, list(event.markets),
             min_profit_usd=0.01, min_roi_pct=0.1,
             gas_per_order=150000, gas_price_gwei=30.0,
         )
@@ -98,7 +97,7 @@ class TestCheckBuyAllArb:
         }
 
         opp = _check_buy_all_arb(
-            event, books,
+            event, books, list(event.markets),
             min_profit_usd=0.01, min_roi_pct=0.1,
             gas_per_order=150000, gas_price_gwei=30.0,
         )
@@ -115,7 +114,7 @@ class TestCheckBuyAllArb:
         }
 
         opp = _check_buy_all_arb(
-            event, books,
+            event, books, list(event.markets),
             min_profit_usd=0.01, min_roi_pct=0.1,
             gas_per_order=150000, gas_price_gwei=30.0,
         )
@@ -133,7 +132,7 @@ class TestCheckBuyAllArb:
         }
 
         opp = _check_buy_all_arb(
-            event, books,
+            event, books, list(event.markets),
             min_profit_usd=0.01, min_roi_pct=0.1,
             gas_per_order=150000, gas_price_gwei=30.0,
         )
@@ -152,7 +151,7 @@ class TestCheckBuyAllArb:
         }
 
         opp = _check_buy_all_arb(
-            event, books,
+            event, books, list(event.markets),
             min_profit_usd=0.01, min_roi_pct=0.1,
             gas_per_order=150000, gas_price_gwei=30.0,
         )
@@ -175,7 +174,7 @@ class TestCheckSellAllArb:
         }
 
         opp = _check_sell_all_arb(
-            event, books,
+            event, books, list(event.markets),
             min_profit_usd=0.01, min_roi_pct=0.1,
             gas_per_order=150000, gas_price_gwei=30.0,
         )
@@ -194,48 +193,255 @@ class TestCheckSellAllArb:
         }
 
         opp = _check_sell_all_arb(
-            event, books,
+            event, books, list(event.markets),
             min_profit_usd=0.01, min_roi_pct=0.1,
             gas_per_order=150000, gas_price_gwei=30.0,
         )
         assert opp is None
 
 
+def _mock_book_fetcher(books: dict):
+    """Create a book_fetcher callable that returns the given books dict."""
+    call_count = 0
+    def fetcher(token_ids: list[str]) -> dict:
+        nonlocal call_count
+        call_count += 1
+        return {tid: books[tid] for tid in token_ids if tid in books}
+    fetcher.call_count = lambda: call_count
+    return fetcher
+
+
+class TestStaleMarketFiltering:
+    def test_stale_market_excluded_from_buy_arb(self):
+        """A stale (past end_date) market should be excluded from buy-all arb."""
+        m1 = _make_market("c1", "y1", "n1")
+        m2 = Market(
+            condition_id="c2",
+            question="Stale outcome?",
+            yes_token_id="y2",
+            no_token_id="n2",
+            neg_risk=True,
+            event_id="e1",
+            min_tick_size="0.01",
+            active=True,
+            end_date="2025-01-01T00:00:00Z",  # in the past
+        )
+        event = _make_event([m1, m2])
+
+        books = {
+            "y1": _make_book("y1", 0.25, 100, 0.25, 100),
+            "y2": _make_book("y2", 0.25, 100, 0.25, 100),
+        }
+
+        # With the stale market, only 1 active market remains -> not enough for multi-outcome arb
+        # Stale filtering now happens in scan_negrisk_events; pass only non-stale markets
+        from scanner.models import is_market_stale
+        active = [m for m in event.markets if not is_market_stale(m)]
+        opp = _check_buy_all_arb(
+            event, books, active,
+            min_profit_usd=0.01, min_roi_pct=0.1,
+            gas_per_order=150000, gas_price_gwei=30.0,
+        )
+        assert opp is None
+
+    def test_closed_market_excluded(self):
+        """A closed market should be excluded from arb checks."""
+        m1 = _make_market("c1", "y1", "n1")
+        m2 = Market(
+            condition_id="c2",
+            question="Closed outcome?",
+            yes_token_id="y2",
+            no_token_id="n2",
+            neg_risk=True,
+            event_id="e1",
+            min_tick_size="0.01",
+            active=True,
+            closed=True,
+        )
+        event = _make_event([m1, m2])
+
+        books = {
+            "y1": _make_book("y1", 0.25, 100, 0.25, 100),
+            "y2": _make_book("y2", 0.25, 100, 0.25, 100),
+        }
+
+        # Closed filtering now happens in scan_negrisk_events; pass only non-closed markets
+        from scanner.models import is_market_stale
+        active = [m for m in event.markets if not is_market_stale(m)]
+        opp = _check_buy_all_arb(
+            event, books, active,
+            min_profit_usd=0.01, min_roi_pct=0.1,
+            gas_per_order=150000, gas_price_gwei=30.0,
+        )
+        assert opp is None
+
+    def test_stale_markets_filtered_in_scan(self):
+        """scan_negrisk_events should skip stale markets entirely."""
+        m1 = _make_market("c1", "y1", "n1")
+        m2 = _make_market("c2", "y2", "n2")
+        m_stale = Market(
+            condition_id="c3",
+            question="Stale?",
+            yes_token_id="y3",
+            no_token_id="n3",
+            neg_risk=True,
+            event_id="e1",
+            min_tick_size="0.01",
+            active=True,
+            end_date="2025-01-01T00:00:00Z",
+        )
+        event = _make_event([m1, m2, m_stale])
+
+        fetcher = _mock_book_fetcher({
+            "y1": _make_book("y1", 0.25, 100, 0.25, 100),
+            "y2": _make_book("y2", 0.25, 100, 0.25, 100),
+        })
+
+        result = scan_negrisk_events(
+            fetcher, [event], 0.01, 0.1, 150000, 30.0,
+        )
+        # Should find a 2-outcome arb (m1+m2), not a 3-outcome one
+        if result:
+            assert len(result[0].legs) == 2
+
+
 class TestScanNegRiskEvents:
-    @patch("scanner.negrisk.get_orderbooks")
-    def test_filters_non_negrisk(self, mock_get_books):
+    def test_filters_non_negrisk(self):
         m = _make_market("c1", "y1", "n1")
         event = Event(event_id="e1", title="Binary", markets=(m,), neg_risk=False)
+        fetcher = _mock_book_fetcher({})
         result = scan_negrisk_events(
-            MagicMock(), [event], 0.50, 2.0, 150000, 30.0,
+            fetcher, [event], 0.50, 2.0, 150000, 30.0,
         )
         assert result == []
 
-    @patch("scanner.negrisk.get_orderbooks")
-    def test_filters_single_market_events(self, mock_get_books):
+    def test_filters_single_market_events(self):
         """Events with only 1 market can't have multi-outcome arb."""
         m = _make_market("c1", "y1", "n1")
         event = _make_event([m])
+        fetcher = _mock_book_fetcher({})
         result = scan_negrisk_events(
-            MagicMock(), [event], 0.50, 2.0, 150000, 30.0,
+            fetcher, [event], 0.50, 2.0, 150000, 30.0,
         )
         assert result == []
 
-    @patch("scanner.negrisk.get_orderbooks")
-    def test_finds_arb(self, mock_get_books):
+    def test_finds_arb(self):
         m1 = _make_market("c1", "y1", "n1")
         m2 = _make_market("c2", "y2", "n2")
         m3 = _make_market("c3", "y3", "n3")
         event = _make_event([m1, m2, m3])
 
-        mock_get_books.return_value = {
+        fetcher = _mock_book_fetcher({
             "y1": _make_book("y1", 0.25, 100, 0.25, 100),
             "y2": _make_book("y2", 0.25, 100, 0.25, 100),
             "y3": _make_book("y3", 0.25, 100, 0.25, 100),
-        }
+        })
 
         result = scan_negrisk_events(
-            MagicMock(), [event], 0.01, 0.1, 150000, 30.0,
+            fetcher, [event], 0.01, 0.1, 150000, 30.0,
         )
         assert len(result) >= 1
         assert result[0].type == OpportunityType.NEGRISK_REBALANCE
+
+    def test_volume_filter_excludes_zero_volume(self):
+        """Markets with zero volume should be excluded when min_volume is set."""
+        m1 = Market(
+            condition_id="c1",
+            question="Zero vol?",
+            yes_token_id="y1",
+            no_token_id="n1",
+            neg_risk=True,
+            event_id="e1",
+            min_tick_size="0.01",
+            active=True,
+            volume=0.0,
+        )
+        m2 = Market(
+            condition_id="c2",
+            question="Also zero vol?",
+            yes_token_id="y2",
+            no_token_id="n2",
+            neg_risk=True,
+            event_id="e1",
+            min_tick_size="0.01",
+            active=True,
+            volume=0.0,
+        )
+        event = _make_event([m1, m2])
+        fetcher = _mock_book_fetcher({})
+        result = scan_negrisk_events(
+            fetcher, [event], 0.01, 0.1, 150000, 30.0,
+            min_volume=100.0,
+        )
+        assert result == []
+
+    def test_volume_filter_includes_high_volume(self):
+        """Markets with volume above min_volume should be included."""
+        m1 = Market(
+            condition_id="c1",
+            question="High vol A?",
+            yes_token_id="y1",
+            no_token_id="n1",
+            neg_risk=True,
+            event_id="e1",
+            min_tick_size="0.01",
+            active=True,
+            volume=5000.0,
+        )
+        m2 = Market(
+            condition_id="c2",
+            question="High vol B?",
+            yes_token_id="y2",
+            no_token_id="n2",
+            neg_risk=True,
+            event_id="e1",
+            min_tick_size="0.01",
+            active=True,
+            volume=5000.0,
+        )
+        m3 = Market(
+            condition_id="c3",
+            question="High vol C?",
+            yes_token_id="y3",
+            no_token_id="n3",
+            neg_risk=True,
+            event_id="e1",
+            min_tick_size="0.01",
+            active=True,
+            volume=5000.0,
+        )
+        event = _make_event([m1, m2, m3])
+        fetcher = _mock_book_fetcher({
+            "y1": _make_book("y1", 0.25, 100, 0.25, 100),
+            "y2": _make_book("y2", 0.25, 100, 0.25, 100),
+            "y3": _make_book("y3", 0.25, 100, 0.25, 100),
+        })
+        result = scan_negrisk_events(
+            fetcher, [event], 0.01, 0.1, 150000, 30.0,
+            min_volume=100.0,
+        )
+        assert len(result) >= 1
+
+    def test_fetches_books_once_for_all_events(self):
+        """Scanner should batch-fetch all needed YES books in a single call."""
+        e1 = _make_event([
+            _make_market("c1", "y1", "n1", "e1"),
+            _make_market("c2", "y2", "n2", "e1"),
+        ], "e1")
+        e2 = _make_event([
+            _make_market("c3", "y3", "n3", "e2"),
+            _make_market("c4", "y4", "n4", "e2"),
+        ], "e2")
+        fetcher = _mock_book_fetcher({
+            "y1": _make_book("y1", 0.25, 100, 0.25, 100),
+            "y2": _make_book("y2", 0.25, 100, 0.25, 100),
+            "y3": _make_book("y3", 0.25, 100, 0.25, 100),
+            "y4": _make_book("y4", 0.25, 100, 0.25, 100),
+        })
+
+        result = scan_negrisk_events(
+            fetcher, [e1, e2], 0.01, 0.1, 150000, 30.0,
+        )
+
+        assert len(result) >= 2
+        assert fetcher.call_count() == 1

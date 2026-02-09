@@ -110,6 +110,7 @@ class TestOpportunity:
                 LegOrder("n1", Side.BUY, 0.48, 100.0),
             ),
             expected_profit_per_set=0.04,
+            net_profit_per_set=0.04,
             max_sets=100.0,
             gross_profit=4.0,
             estimated_gas_cost=0.01,
@@ -137,6 +138,66 @@ class TestOpportunity:
         assert before <= opp.timestamp <= after
 
 
+class TestIsSellArb:
+    def _make_opp_with_legs(self, legs):
+        return Opportunity(
+            type=OpportunityType.BINARY_REBALANCE,
+            event_id="e1",
+            legs=tuple(legs),
+            expected_profit_per_set=0.05,
+            net_profit_per_set=0.05,
+            max_sets=10.0,
+            gross_profit=0.50,
+            estimated_gas_cost=0.01,
+            net_profit=0.49,
+            roi_pct=5.0,
+            required_capital=10.0,
+        )
+
+    def test_all_sell_legs(self):
+        opp = self._make_opp_with_legs([
+            LegOrder("t1", Side.SELL, 0.55, 10),
+            LegOrder("t2", Side.SELL, 0.50, 10),
+        ])
+        assert opp.is_sell_arb is True
+        assert opp.is_buy_arb is False
+
+    def test_single_sell_leg(self):
+        opp = self._make_opp_with_legs([
+            LegOrder("t1", Side.SELL, 0.55, 10),
+        ])
+        assert opp.is_sell_arb is True
+        assert opp.is_buy_arb is False
+
+    def test_all_buy_legs(self):
+        opp = self._make_opp_with_legs([
+            LegOrder("t1", Side.BUY, 0.45, 10),
+            LegOrder("t2", Side.BUY, 0.45, 10),
+        ])
+        assert opp.is_buy_arb is True
+        assert opp.is_sell_arb is False
+
+    def test_single_buy_leg(self):
+        opp = self._make_opp_with_legs([
+            LegOrder("t1", Side.BUY, 0.45, 10),
+        ])
+        assert opp.is_buy_arb is True
+        assert opp.is_sell_arb is False
+
+    def test_mixed_legs(self):
+        opp = self._make_opp_with_legs([
+            LegOrder("t1", Side.BUY, 0.45, 10),
+            LegOrder("t2", Side.SELL, 0.55, 10),
+        ])
+        assert opp.is_sell_arb is False
+        assert opp.is_buy_arb is False
+
+    def test_empty_legs(self):
+        opp = self._make_opp_with_legs([])
+        assert opp.is_sell_arb is False
+        assert opp.is_buy_arb is False
+
+
 class TestTradeResult:
     def test_creation(self):
         opp = Opportunity(
@@ -144,6 +205,7 @@ class TestTradeResult:
             event_id="e1",
             legs=(LegOrder("y1", Side.BUY, 0.50, 10.0),),
             expected_profit_per_set=0.02,
+            net_profit_per_set=0.02,
             max_sets=10.0,
             gross_profit=0.20,
             estimated_gas_cost=0.01,

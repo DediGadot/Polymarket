@@ -2,7 +2,6 @@
 Integration tests for client/gamma.py -- market discovery with mocked HTTP.
 """
 
-import json
 import pytest
 import httpx
 import respx
@@ -140,3 +139,42 @@ class TestBuildEvents:
         nr_event = [e for e in events if e.neg_risk][0]
         assert len(nr_event.markets) == 2
         assert nr_event.event_id == "e1"
+
+    def test_negrisk_grouped_by_neg_risk_market_id(self):
+        """Sports events with multiple prop groups (moneyline, spread, totals)
+        should produce separate Event objects per negRiskMarketId."""
+        from scanner.models import Market
+        # Same event_id, different neg_risk_market_ids (moneyline vs spread)
+        m1 = Market("c1", "Team A to win", "y1", "n1", True, "e1", "0.01", True,
+                     neg_risk_market_id="nrm_moneyline")
+        m2 = Market("c2", "Draw", "y2", "n2", True, "e1", "0.01", True,
+                     neg_risk_market_id="nrm_moneyline")
+        m3 = Market("c3", "Team B to win", "y3", "n3", True, "e1", "0.01", True,
+                     neg_risk_market_id="nrm_moneyline")
+        m4 = Market("c4", "Over 2.5", "y4", "n4", True, "e1", "0.01", True,
+                     neg_risk_market_id="nrm_totals")
+        m5 = Market("c5", "Under 2.5", "y5", "n5", True, "e1", "0.01", True,
+                     neg_risk_market_id="nrm_totals")
+
+        events = build_events([m1, m2, m3, m4, m5])
+        nr_events = [e for e in events if e.neg_risk]
+        assert len(nr_events) == 2  # 2 groups, NOT 1 combined event
+
+        moneyline = [e for e in nr_events if len(e.markets) == 3][0]
+        totals = [e for e in nr_events if len(e.markets) == 2][0]
+        assert moneyline.neg_risk_market_id == "nrm_moneyline"
+        assert totals.neg_risk_market_id == "nrm_totals"
+        # Both should retain the original event_id
+        assert moneyline.event_id == "e1"
+        assert totals.event_id == "e1"
+
+    def test_negrisk_without_market_id_falls_back_to_event_id(self):
+        """NegRisk markets without neg_risk_market_id should group by event_id."""
+        from scanner.models import Market
+        m1 = Market("c1", "Q1", "y1", "n1", True, "e1", "0.01", True)
+        m2 = Market("c2", "Q2", "y2", "n2", True, "e1", "0.01", True)
+
+        events = build_events([m1, m2])
+        assert len(events) == 1
+        assert events[0].neg_risk is True
+        assert len(events[0].markets) == 2

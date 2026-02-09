@@ -1,0 +1,247 @@
+warning: The `tool.uv.dev-dependencies` field (used in `pyproject.toml`) is deprecated and will be removed in a future release; use `dependency-groups.dev` instead
+07:56:34 INF ____       _                            _        _
+|  _ \ ___ | |_   _ _ __ ___   __ _ _ __| | _____| |_
+| |_) / _ \| | | | | '_ ` _ \ / _` | '__| |/ / _ \ __|
+|  __/ (_) | | |_| | | | | | | (_| | |  |   <  __/ |_
+|_|   \___/|_|\__, |_| |_| |_|\__,_|_|  |_|\_\___|\__|
+              |___/            Arbitrage Bot v0.1
+07:56:34 INF 
+07:56:34 INF Mode:                DRY-RUN (public APIs only, no execution)
+07:56:34 INF Min profit:          $0.50
+07:56:34 INF Min ROI:             2.0%
+07:56:34 INF Max exposure:        $500 per trade / $5000 total
+07:56:34 INF Circuit breakers:    $50/hr  $200/day  5 consecutive
+07:56:34 INF Scan interval:       1.0s
+07:56:34 INF Order type:          FAK (Fill-and-Kill)
+07:56:34 INF WebSocket:           enabled
+07:56:34 INF Cross-platform:      disabled
+07:56:34 INF CLOB endpoint:       https://clob.polymarket.com
+07:56:34 INF Gamma endpoint:      https://gamma-api.polymarket.com
+07:56:34 INF 
+07:56:34 INF Initializing unauthenticated CLOB client (dry-run mode)...
+07:56:34 INF Client ready -- using public endpoints only
+07:56:34 INF Safety systems initialized (circuit breaker active)
+07:56:34 INF Book cache initialized (max_age=5.0s)
+07:56:34 INF Gas oracle initialized (rpc=https://polygon-rpc.com, cache=10s)
+07:56:34 INF Fee model enabled
+07:56:34 INF Latency scanner enabled (min_edge=5.0%)
+07:56:34 INF Spike detector initialized (threshold=5.0%, window=30s, cooldown=60s)
+07:56:34 INF Strategy selector initialized (adaptive mode)
+07:56:34 INF Cross-platform arbitrage disabled
+07:56:34 INF WebSocket disabled in dry-run mode (REST only)
+07:56:34 INF Status writer initialized (status.md, last 20 cycles)
+07:56:34 INF 
+07:56:34 INF ── Cycle 1 ──────────────────────────────────────────────
+07:56:34 INF [1/3] Fetching active markets from Gamma API...
+07:56:52 INF       Received 27,221 markets in 17.9s
+07:56:52 INF       13,353 binary  |  2409 negRisk events (13,868 markets)
+07:56:52 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:56:52 INF       Scanning 13,353 binary markets...
+07:56:59 INF       Scanning 2409 negRisk events...
+07:56:59 ERR Cycle 1 failed: PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+     PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+07:56:59 INF       Cycle 1 complete in 25.4s  |  session: 0 trades, P&L $0.00
+07:56:59 INF ── Cycle 2 ──────────────────────────────────────────────
+07:56:59 INF [1/3] Fetching active markets from Gamma API...
+07:57:04 INF       Received 27,221 markets in 4.5s
+07:57:04 INF       13,353 binary  |  2409 negRisk events (13,868 markets)
+07:57:04 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:57:04 INF       Scanning 13,353 binary markets...
+07:57:10 ERR Cycle 2 failed: PolyApiException[status_code=None, error_message=Request exception!]
+     PolyApiException[status_code=None, error_message=Request exception!]
+07:57:10 INF       Cycle 2 complete in 11.3s  |  session: 0 trades, P&L $0.00
+07:57:10 INF ── Cycle 3 ──────────────────────────────────────────────
+07:57:10 INF [1/3] Fetching active markets from Gamma API...
+07:57:14 INF       Received 27,221 markets in 3.8s
+07:57:14 INF       13,353 binary  |  2409 negRisk events (13,868 markets)
+07:57:15 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:57:15 INF       Scanning 13,353 binary markets...
+07:57:20 ERR Cycle 3 failed: PolyApiException[status_code=None, error_message=Request exception!]
+     PolyApiException[status_code=None, error_message=Request exception!]
+07:57:20 INF       Cycle 3 complete in 9.8s  |  session: 0 trades, P&L $0.00
+07:57:20 INF ── Cycle 4 ──────────────────────────────────────────────
+07:57:20 INF [1/3] Fetching active markets from Gamma API...
+07:57:25 INF       Received 27,221 markets in 4.5s
+07:57:25 INF       13,353 binary  |  2409 negRisk events (13,868 markets)
+07:57:25 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:57:25 INF       Scanning 13,353 binary markets...
+07:57:32 INF       Scanning 2409 negRisk events...
+07:57:33 ERR Cycle 4 failed: PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+     PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+07:57:33 INF       Cycle 4 complete in 13.1s  |  session: 0 trades, P&L $0.00
+07:57:33 INF ── Cycle 5 ──────────────────────────────────────────────
+07:57:33 INF [1/3] Fetching active markets from Gamma API...
+07:57:38 INF       Received 27,221 markets in 4.5s
+07:57:38 INF       13,353 binary  |  2409 negRisk events (13,868 markets)
+07:57:38 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:57:38 INF       Scanning 13,353 binary markets...
+07:57:43 ERR Cycle 5 failed: PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+     PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+07:57:43 INF       Cycle 5 complete in 9.8s  |  session: 0 trades, P&L $0.00
+07:57:43 INF ── Cycle 6 ──────────────────────────────────────────────
+07:57:43 INF [1/3] Fetching active markets from Gamma API...
+07:57:47 INF       Received 27,221 markets in 3.5s
+07:57:47 INF       13,353 binary  |  2409 negRisk events (13,868 markets)
+07:57:47 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:57:47 INF       Scanning 13,353 binary markets...
+07:57:51 ERR Cycle 6 failed: PolyApiException[status_code=None, error_message=Request exception!]
+     PolyApiException[status_code=None, error_message=Request exception!]
+07:57:51 INF       Cycle 6 complete in 8.2s  |  session: 0 trades, P&L $0.00
+07:57:51 INF ── Cycle 7 ──────────────────────────────────────────────
+07:57:51 INF [1/3] Fetching active markets from Gamma API...
+07:57:56 INF       Received 27,221 markets in 4.5s
+07:57:56 INF       13,353 binary  |  2409 negRisk events (13,868 markets)
+07:57:56 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:57:56 INF       Scanning 13,353 binary markets...
+07:58:03 ERR Cycle 7 failed: PolyApiException[status_code=None, error_message=Request exception!]
+     PolyApiException[status_code=None, error_message=Request exception!]
+07:58:03 INF       Cycle 7 complete in 11.6s  |  session: 0 trades, P&L $0.00
+07:58:03 INF ── Cycle 8 ──────────────────────────────────────────────
+07:58:03 INF [1/3] Fetching active markets from Gamma API...
+07:58:06 INF       Received 27,221 markets in 3.5s
+07:58:06 INF       13,353 binary  |  2409 negRisk events (13,868 markets)
+07:58:06 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:58:06 INF       Scanning 13,353 binary markets...
+07:58:11 ERR Cycle 8 failed: PolyApiException[status_code=None, error_message=Request exception!]
+     PolyApiException[status_code=None, error_message=Request exception!]
+07:58:11 INF       Cycle 8 complete in 8.3s  |  session: 0 trades, P&L $0.00
+07:58:11 INF ── Cycle 9 ──────────────────────────────────────────────
+07:58:11 INF [1/3] Fetching active markets from Gamma API...
+07:58:16 INF       Received 27,221 markets in 5.1s
+07:58:16 INF       13,353 binary  |  2409 negRisk events (13,868 markets)
+07:58:16 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:58:16 INF       Scanning 13,353 binary markets...
+07:58:23 INF       Scanning 2409 negRisk events...
+07:58:24 ERR Cycle 9 failed: PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+     PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+07:58:24 INF       Cycle 9 complete in 13.1s  |  session: 0 trades, P&L $0.00
+07:58:24 INF ── Cycle 10 ──────────────────────────────────────────────
+07:58:24 INF [1/3] Fetching active markets from Gamma API...
+07:58:28 INF       Received 27,221 markets in 3.5s
+07:58:28 INF       13,353 binary  |  2409 negRisk events (13,868 markets)
+07:58:28 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:58:28 INF       Scanning 13,353 binary markets...
+07:58:28 INF       Scanning 2409 negRisk events...
+07:58:32 INF NEGRISK BUY ARB: Will JD Vance win the 2028 US Presidential Electio | 31 outcomes | cost=0.9450 profit/set=0.0550 sets=895.2 net=$31.10 roi=3.68%
+07:58:32 INF NEGRISK BUY ARB: Will the Democrats win the Montana Senate race in  | 2 outcomes | cost=0.9190 profit/set=0.0810 sets=141.9 net=$8.64 roi=6.63%
+07:58:32 INF NEGRISK BUY ARB: Will the Democrats win the Nebraska Senate race in | 2 outcomes | cost=0.7570 profit/set=0.2430 sets=10.5 net=$2.33 roi=29.27%
+07:58:32 INF NEGRISK BUY ARB: Will Danielle Bethell win the 2026 Oregon Governor | 6 outcomes | cost=0.9180 profit/set=0.0820 sets=26.8 net=$1.62 roi=6.57%
+07:58:32 INF NEGRISK BUY ARB: Will the Republican Party win the TX-23 House seat | 2 outcomes | cost=0.9100 profit/set=0.0900 sets=28.4 net=$1.97 roi=7.63%
+07:58:32 INF       Found 4 opportunities in 4.7s (best score: 0.49, best profit: $8.64)
+07:58:32 INF   #1   negrisk_rebalance          event=57660           profit=$8.64  roi=6.63%  legs=2  capital=$130.41
+07:58:32 INF   #2   negrisk_rebalance          event=191653          profit=$1.97  roi=7.63%  legs=2  capital=$25.84
+07:58:32 INF   #3   negrisk_rebalance          event=97515           profit=$1.62  roi=6.57%  legs=6  capital=$24.63
+07:58:32 INF   #4   negrisk_rebalance          event=59204           profit=$2.33  roi=29.27%  legs=2  capital=$7.96
+07:58:32 INF       Cycle 10 complete in 8.2s  |  session: 10 cycles, 4 opps found
+07:58:32 INF ── Cycle 11 ──────────────────────────────────────────────
+07:58:32 INF [1/3] Fetching active markets from Gamma API...
+07:58:37 INF       Received 27,221 markets in 4.5s
+07:58:37 INF       13,353 binary  |  2409 negRisk events (13,868 markets)
+07:58:37 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:58:37 INF       Scanning 13,353 binary markets...
+07:58:44 ERR Cycle 11 failed: PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+     PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+07:58:44 INF       Cycle 11 complete in 11.2s  |  session: 0 trades, P&L $0.00
+07:58:44 INF ── Cycle 12 ──────────────────────────────────────────────
+07:58:44 INF [1/3] Fetching active markets from Gamma API...
+07:59:03 INF       Received 27,221 markets in 18.9s
+07:59:03 INF       13,350 binary  |  2409 negRisk events (13,871 markets)
+07:59:03 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:59:03 INF       Scanning 13,350 binary markets...
+07:59:09 ERR Cycle 12 failed: PolyApiException[status_code=None, error_message=Request exception!]
+     PolyApiException[status_code=None, error_message=Request exception!]
+07:59:09 INF       Cycle 12 complete in 25.9s  |  session: 0 trades, P&L $0.00
+07:59:09 INF ── Cycle 13 ──────────────────────────────────────────────
+07:59:09 INF [1/3] Fetching active markets from Gamma API...
+07:59:13 INF       Received 27,221 markets in 3.5s
+07:59:13 INF       13,350 binary  |  2409 negRisk events (13,871 markets)
+07:59:13 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:59:13 INF       Scanning 13,350 binary markets...
+07:59:20 INF       Scanning 2409 negRisk events...
+07:59:22 ERR Cycle 13 failed: PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+     PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+07:59:22 INF       Cycle 13 complete in 12.5s  |  session: 0 trades, P&L $0.00
+07:59:22 INF ── Cycle 14 ──────────────────────────────────────────────
+07:59:22 INF [1/3] Fetching active markets from Gamma API...
+07:59:25 INF       Received 27,221 markets in 3.5s
+07:59:25 INF       13,350 binary  |  2409 negRisk events (13,871 markets)
+07:59:26 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:59:26 INF       Scanning 13,350 binary markets...
+07:59:32 ERR Cycle 14 failed: PolyApiException[status_code=None, error_message=Request exception!]
+     PolyApiException[status_code=None, error_message=Request exception!]
+07:59:32 INF       Cycle 14 complete in 9.6s  |  session: 0 trades, P&L $0.00
+07:59:32 INF ── Cycle 15 ──────────────────────────────────────────────
+07:59:32 INF [1/3] Fetching active markets from Gamma API...
+07:59:35 INF       Received 27,221 markets in 3.5s
+07:59:35 INF       13,350 binary  |  2409 negRisk events (13,871 markets)
+07:59:35 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:59:35 INF       Scanning 13,350 binary markets...
+07:59:41 ERR Cycle 15 failed: PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+     PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+07:59:41 INF       Cycle 15 complete in 9.1s  |  session: 0 trades, P&L $0.00
+07:59:41 INF ── Cycle 16 ──────────────────────────────────────────────
+07:59:41 INF [1/3] Fetching active markets from Gamma API...
+07:59:44 INF       Received 27,221 markets in 3.5s
+07:59:44 INF       13,350 binary  |  2409 negRisk events (13,871 markets)
+07:59:44 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:59:44 INF       Scanning 13,350 binary markets...
+07:59:51 ERR Cycle 16 failed: PolyApiException[status_code=None, error_message=Request exception!]
+     PolyApiException[status_code=None, error_message=Request exception!]
+07:59:51 INF       Cycle 16 complete in 10.1s  |  session: 0 trades, P&L $0.00
+07:59:51 INF ── Cycle 17 ──────────────────────────────────────────────
+07:59:51 INF [1/3] Fetching active markets from Gamma API...
+07:59:54 INF       Received 27,221 markets in 3.5s
+07:59:54 INF       13,350 binary  |  2409 negRisk events (13,871 markets)
+07:59:55 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+07:59:55 INF       Scanning 13,350 binary markets...
+08:00:00 ERR Cycle 17 failed: PolyApiException[status_code=None, error_message=Request exception!]
+     PolyApiException[status_code=None, error_message=Request exception!]
+08:00:00 INF       Cycle 17 complete in 9.5s  |  session: 0 trades, P&L $0.00
+08:00:00 INF ── Cycle 18 ──────────────────────────────────────────────
+08:00:00 INF [1/3] Fetching active markets from Gamma API...
+08:00:04 INF       Received 27,221 markets in 3.5s
+08:00:04 INF       13,350 binary  |  2409 negRisk events (13,871 markets)
+08:00:04 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+08:00:04 INF       Scanning 13,350 binary markets...
+08:00:10 ERR Cycle 18 failed: PolyApiException[status_code=None, error_message=Request exception!]
+     PolyApiException[status_code=None, error_message=Request exception!]
+08:00:10 INF       Cycle 18 complete in 10.0s  |  session: 0 trades, P&L $0.00
+08:00:10 INF ── Cycle 19 ──────────────────────────────────────────────
+08:00:10 INF [1/3] Fetching active markets from Gamma API...
+08:00:14 INF       Received 27,221 markets in 3.5s
+08:00:14 INF       13,350 binary  |  2409 negRisk events (13,871 markets)
+08:00:14 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+08:00:14 INF       Scanning 13,350 binary markets...
+08:00:21 ERR Cycle 19 failed: PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+     PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+08:00:21 INF       Cycle 19 complete in 10.4s  |  session: 0 trades, P&L $0.00
+08:00:21 INF ── Cycle 20 ──────────────────────────────────────────────
+08:00:21 INF [1/3] Fetching active markets from Gamma API...
+08:00:24 INF       Received 27,221 markets in 3.5s
+08:00:24 INF       13,350 binary  |  2409 negRisk events (13,871 markets)
+08:00:25 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+08:00:25 INF       Scanning 13,350 binary markets...
+08:00:31 ERR Cycle 20 failed: PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+     PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+08:00:31 INF       Cycle 20 complete in 9.9s  |  session: 0 trades, P&L $0.00
+08:00:31 INF ── Cycle 21 ──────────────────────────────────────────────
+08:00:31 INF [1/3] Fetching active markets from Gamma API...
+08:00:34 INF       Received 27,221 markets in 3.5s
+08:00:34 INF       13,350 binary  |  2409 negRisk events (13,871 markets)
+08:00:34 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+08:00:34 INF       Scanning 13,350 binary markets...
+08:00:41 ERR Cycle 21 failed: PolyApiException[status_code=None, error_message=Request exception!]
+     PolyApiException[status_code=None, error_message=Request exception!]
+08:00:41 INF       Cycle 21 complete in 10.2s  |  session: 0 trades, P&L $0.00
+08:00:41 INF ── Cycle 22 ──────────────────────────────────────────────
+08:00:41 INF [1/3] Fetching active markets from Gamma API...
+08:00:44 INF       Received 27,221 markets in 3.5s
+08:00:44 INF       13,350 binary  |  2409 negRisk events (13,871 markets)
+08:00:45 INF [2/3] Scanning for arbitrage (strategy=conservative)...
+08:00:45 INF       Scanning 13,350 binary markets...
+08:00:52 INF       Scanning 2409 negRisk events...
+08:00:53 ERR Cycle 22 failed: PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+     PolyApiException[status_code=429, error_message={'error': 'rate limit set at 50 requests every 10 seconds, if you need instant data check this out https://docs.polymarket.com/#market-channel'}]
+08:00:53 INF       Cycle 22 complete in 12.2s  |  session: 0 trades, P&L $0.00
+08:00:53 INF ── Cycle 23 ──────────────────────────────────────────────
+08:00:53 INF [1/3] Fetching active markets from Gamma API...

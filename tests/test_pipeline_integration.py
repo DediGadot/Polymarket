@@ -3,7 +3,7 @@ Integration test: full scan -> detect -> size -> execute pipeline with mocks.
 Tests the complete flow without hitting real APIs.
 """
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 import pytest
 
 from config import Config
@@ -42,12 +42,17 @@ def _make_book(token_id, bid_price, bid_size, ask_price, ask_size):
     )
 
 
+def _mock_book_fetcher(books: dict):
+    """Create a book_fetcher callable that returns the given books dict."""
+    def fetcher(token_ids: list[str]) -> dict:
+        return {tid: books[tid] for tid in token_ids if tid in books}
+    return fetcher
+
+
 class TestFullPipelineBinaryArb:
     """End-to-end: discover binary arb -> size -> paper execute -> track PnL."""
 
-    @patch("scanner.binary.get_orderbooks")
-    @patch("executor.safety.get_orderbooks")
-    def test_complete_flow(self, mock_safety_books, mock_scan_books):
+    def test_complete_flow(self):
         cfg = _cfg()
         client = MagicMock()
 
@@ -63,12 +68,11 @@ class TestFullPipelineBinaryArb:
             "y1": _make_book("y1", 0.39, 200, 0.40, 200),
             "n1": _make_book("n1", 0.39, 200, 0.40, 200),
         }
-        mock_scan_books.return_value = books
-        mock_safety_books.return_value = books
+        fetcher = _mock_book_fetcher(books)
 
         # Step 1: Scan
         opps = scan_binary_markets(
-            client, markets,
+            fetcher, markets,
             cfg.min_profit_usd, cfg.min_roi_pct,
             cfg.gas_per_order, cfg.gas_price_gwei,
         )
@@ -78,8 +82,8 @@ class TestFullPipelineBinaryArb:
         assert opp.expected_profit_per_set == pytest.approx(0.20, abs=0.01)
 
         # Step 2: Safety checks
-        verify_prices_fresh(client, opp)
-        verify_depth(client, opp)
+        verify_prices_fresh(opp, books)
+        verify_depth(opp, books)
 
         # Step 3: Size
         size = compute_position_size(
@@ -107,9 +111,7 @@ class TestFullPipelineBinaryArb:
 class TestFullPipelineNegRiskArb:
     """End-to-end: discover negrisk arb -> size -> paper execute -> track PnL."""
 
-    @patch("scanner.negrisk.get_orderbooks")
-    @patch("executor.safety.get_orderbooks")
-    def test_complete_flow(self, mock_safety_books, mock_scan_books):
+    def test_complete_flow(self):
         cfg = _cfg()
         client = MagicMock()
 
@@ -121,12 +123,11 @@ class TestFullPipelineNegRiskArb:
         event = Event(event_id="e1", title="4-way race", markets=tuple(markets), neg_risk=True)
 
         books = {f"y{i}": _make_book(f"y{i}", 0.19, 150, 0.20, 150) for i in range(4)}
-        mock_scan_books.return_value = books
-        mock_safety_books.return_value = books
+        fetcher = _mock_book_fetcher(books)
 
         # Scan
         opps = scan_negrisk_events(
-            client, [event],
+            fetcher, [event],
             cfg.min_profit_usd, cfg.min_roi_pct,
             cfg.gas_per_order, cfg.gas_price_gwei,
         )
@@ -137,8 +138,8 @@ class TestFullPipelineNegRiskArb:
         assert len(opp.legs) == 4
 
         # Safety
-        verify_prices_fresh(client, opp)
-        verify_depth(client, opp)
+        verify_prices_fresh(opp, books)
+        verify_depth(opp, books)
 
         # Size
         size = compute_position_size(
@@ -170,7 +171,6 @@ class TestCircuitBreakerIntegration:
             max_loss_per_day=10.0,
             max_consecutive_failures=3,
         )
-        pnl = PnLTracker(ledger_path="/dev/null")
 
         from executor.safety import CircuitBreakerTripped
 
@@ -198,22 +198,18 @@ class TestCircuitBreakerIntegration:
 class TestNoArbScenario:
     """Test that correctly-priced markets produce no opportunities."""
 
-    @patch("scanner.binary.get_orderbooks")
-    @patch("scanner.negrisk.get_orderbooks")
-    def test_no_opps_in_fair_markets(self, mock_nr_books, mock_bin_books):
-        client = MagicMock()
-
+    def test_no_opps_in_fair_markets(self):
         # Binary: YES=0.55, NO=0.45, total=1.00
         binary_markets = [Market(
             "c1", "Fair binary?", "y1", "n1", False, "e1", "0.01", True,
         )]
-        mock_bin_books.return_value = {
+        bin_fetcher = _mock_book_fetcher({
             "y1": _make_book("y1", 0.54, 500, 0.55, 500),
             "n1": _make_book("n1", 0.44, 500, 0.45, 500),
-        }
+        })
 
         bin_opps = scan_binary_markets(
-            client, binary_markets, 0.50, 2.0, 150000, 30.0,
+            bin_fetcher, binary_markets, 0.50, 2.0, 150000, 30.0,
         )
         assert bin_opps == []
 
@@ -223,13 +219,13 @@ class TestNoArbScenario:
             for i in range(3)
         ]
         event = Event("e2", "Fair 3-way", tuple(nr_markets), True)
-        mock_nr_books.return_value = {
+        nr_fetcher = _mock_book_fetcher({
             "y0": _make_book("y0", 0.34, 200, 0.35, 200),
             "y1": _make_book("y1", 0.34, 200, 0.35, 200),
             "y2": _make_book("y2", 0.29, 200, 0.30, 200),
-        }
+        })
 
         nr_opps = scan_negrisk_events(
-            client, [event], 0.50, 2.0, 150000, 30.0,
+            nr_fetcher, [event], 0.50, 2.0, 150000, 30.0,
         )
         assert nr_opps == []

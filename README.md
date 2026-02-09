@@ -1,174 +1,118 @@
 # Polymarket Arbitrage Bot
 
-Automated detection and execution of risk-free mispricings on [Polymarket](https://polymarket.com). Targets two arbitrage strategies ranked by historical profitability:
+Automated scanner and execution engine for Polymarket arbitrage, with optional
+cross-platform opportunities against Kalshi.
 
-1. **NegRisk Multi-Outcome Rebalancing** -- When the sum of all YES prices in a multi-outcome event falls below $1.00, buy all outcomes for a guaranteed profit at resolution. This strategy generated 73% of the $40M+ in arbitrage profits extracted from Polymarket between Apr 2024 and Apr 2025 ([IMDEA research](https://arxiv.org/abs/2508.03474)), with 29x capital efficiency over binary arbitrage.
+The bot runs a continuous pipeline:
 
-2. **Binary Market Rebalancing** -- When YES ask + NO ask < $1.00 in a binary market, buy both sides. One must resolve to $1.00, locking in the spread as profit.
+1. Fetch markets from Gamma/CLOB.
+2. Scan for opportunities across multiple strategies.
+3. Rank opportunities with a composite score.
+4. Apply sizing and safety checks.
+5. Execute (paper or live) and track session metrics.
 
-## Architecture
+## What It Scans
 
-```
+- `binary_rebalance`: YES ask + NO ask < $1.00 (and inventory-based sell variants).
+- `negrisk_rebalance`: multi-outcome baskets where combined pricing is misaligned.
+- `latency_arb`: short-horizon crypto-related markets lagging spot moves.
+- `spike_lag`: sibling markets lagging during rapid repricing events.
+- `cross_platform_arb`: optional Polymarket vs Kalshi pricing dislocations.
+
+## Repository Layout
+
+```text
 polymarket/
-├── run.py                    # Single pipeline: scan -> detect -> size -> execute -> track
-├── config.py                 # Pydantic config from env vars
-├── client/                   # Polymarket API client
-│   ├── auth.py               # Wallet auth + L2 API credential derivation
-│   ├── clob.py               # CLOB REST (orderbooks, orders, cancellation)
-│   ├── gamma.py              # Market discovery with auto-pagination
-│   └── ws.py                 # WebSocket real-time price feeds
-├── scanner/                  # Arbitrage opportunity detection
-│   ├── models.py             # Data models (Market, OrderBook, Opportunity, etc.)
-│   ├── binary.py             # Binary rebalancing scanner
-│   └── negrisk.py            # NegRisk multi-outcome scanner
-├── executor/                 # Trade execution
-│   ├── engine.py             # Order placement, batch posting, partial fill unwinding
-│   ├── sizing.py             # Half-Kelly criterion position sizing
-│   └── safety.py             # Stale quote checks, depth verification, circuit breakers
-├── monitor/                  # Observability
-│   ├── pnl.py                # P&L tracking with append-only JSON ledger
-│   └── logger.py             # Structured JSON logging
-└── tests/                    # 100 tests across 11 test files
+├── run.py                  # Main loop and CLI entrypoint
+├── config.py               # Environment-driven runtime config
+├── client/                 # Polymarket + Kalshi API clients and auth
+├── scanner/                # Opportunity detection, depth math, scoring, strategy
+├── executor/               # Sizing, safety checks, and execution logic
+├── monitor/                # PnL tracking, status writer, logging
+└── tests/                  # Pytest suite
 ```
 
-## Prerequisites
+## Requirements
 
 - Python 3.11+
-- [uv](https://docs.astral.sh/uv/) package manager
-- A Polygon wallet with USDC
-- A Polymarket account (for proxy address and token approvals)
+- `uv` package manager
+- For `--scan-only`, paper, or live modes:
+  - Polygon private key
+  - Polymarket profile/proxy address
+- For cross-platform mode (`CROSS_PLATFORM_ENABLED=true`):
+  - Kalshi API key ID and RSA private key
 
-## Setup
+## Quick Start
 
 ```bash
-# Clone and install
-git clone <repo-url> && cd polymarket
 uv sync --all-extras
-
-# Configure credentials
 cp .env.example .env
-# Edit .env with your PRIVATE_KEY and POLYMARKET_PROFILE_ADDRESS
 ```
 
-### Required environment variables
-
-| Variable | Description |
-|----------|-------------|
-| `PRIVATE_KEY` | Polygon wallet private key (hex, no 0x prefix) |
-| `POLYMARKET_PROFILE_ADDRESS` | Your Polymarket profile/proxy address |
-
-See `.env.example` for all configurable parameters.
-
-## Usage
+For a no-wallet smoke test:
 
 ```bash
-# Dry-run: no wallet needed, scan real markets using public APIs
+uv run python run.py --dry-run --limit 500
+```
+
+## Run Modes
+
+```bash
+# Public APIs only (no wallet, no execution)
 uv run python run.py --dry-run
 
-# Scan-only: detect opportunities without executing trades (needs wallet)
+# Wallet auth, scanning only (no execution)
 uv run python run.py --scan-only
 
-# Paper trading: simulated execution with virtual P&L tracking
+# Paper trading (default when no --live flag)
 uv run python run.py
 
-# Live trading: real orders on Polymarket
+# Live trading (real orders)
 uv run python run.py --live
 ```
 
-### Dry-run mode
+Additional CLI flags:
 
-No wallet or credentials required. Connects to Polymarket's public APIs (Gamma for market discovery, CLOB for orderbooks) and scans for arbitrage opportunities. Equivalent to `--scan-only` but skips authentication entirely. Use this to verify the bot detects real opportunities before configuring a wallet.
-
-### Scan-only mode
-
-Logs every detected opportunity with type, profit, ROI, and number of legs. No orders are placed. Requires wallet credentials for authenticated API access. Use this to validate detection against real market conditions before risking capital.
-
-### Paper trading mode (default)
-
-Simulates full execution: sizing via Kelly criterion, safety checks, and virtual P&L tracking written to `pnl_ledger.json`. No real orders are placed.
-
-### Live trading mode
-
-Places real GTC limit orders on Polymarket's CLOB. Binary arbs submit both legs as a batch. NegRisk arbs batch in groups of 15 (CLOB limit). Partial fills are automatically unwound via FOK market orders.
-
-## How it works
-
-### Detection
-
-Each scan cycle:
-
-1. Fetches all active markets from the Gamma API (auto-paginates)
-2. Separates binary markets from NegRisk multi-outcome events
-3. Batch-fetches orderbooks for all relevant tokens
-4. **Binary scanner**: checks if `YES_best_ask + NO_best_ask < 1.0`
-5. **NegRisk scanner**: checks if `sum(all YES_best_ask) < 1.0` across an event's outcomes
-6. Filters by minimum profit ($0.50 default) and minimum ROI (2% default)
-7. Ranks opportunities by ROI descending
-
-### Execution
-
-For each opportunity that passes safety checks:
-
-1. **Stale quote check** -- re-fetches prices, rejects if moved beyond slippage tolerance
-2. **Depth check** -- verifies orderbook can fill the intended size
-3. **Kelly sizing** -- computes optimal position size (half-Kelly for conservatism), capped by max exposure
-4. **Batch order submission** -- posts all legs via `POST /orders` (up to 15 per batch)
-5. **Fill tracking** -- monitors order status
-6. **Partial fill unwinding** -- if not all legs fill, cancels unfilled orders and market-sells filled positions
-
-### Safety
-
-- **Circuit breakers**: halt on max hourly loss ($50), max daily loss ($200), or 5 consecutive failures
-- **Graceful shutdown**: SIGINT/SIGTERM cancels all open orders and logs final P&L
-- **Fail-fast**: no silent fallbacks -- crashes are surfaced immediately for supervisor restart
+- `--limit N`: cap binary markets scanned (useful for fast iteration).
+- `--json-log PATH`: append NDJSON logs for machine parsing.
 
 ## Configuration
 
-All parameters are configurable via environment variables or `.env`:
+`config.py` is the source of truth for all environment variables. Key settings:
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `SIGNATURE_TYPE` | `1` | 0=EOA, 1=POLY_PROXY, 2=GNOSIS_SAFE |
-| `MIN_PROFIT_USD` | `0.50` | Minimum absolute profit to execute |
-| `MIN_ROI_PCT` | `2.0` | Minimum ROI % after gas costs |
-| `MAX_EXPOSURE_PER_TRADE` | `500` | Max USDC risked per single arb |
-| `MAX_TOTAL_EXPOSURE` | `5000` | Max total USDC deployed |
-| `MAX_LOSS_PER_HOUR` | `50` | Circuit breaker: hourly loss limit |
-| `MAX_LOSS_PER_DAY` | `200` | Circuit breaker: daily loss limit |
-| `MAX_CONSECUTIVE_FAILURES` | `5` | Circuit breaker: consecutive failure limit |
-| `SCAN_INTERVAL_SEC` | `1.0` | Seconds between scan cycles |
-| `ORDER_TIMEOUT_SEC` | `5.0` | Cancel unfilled orders after this |
-| `GAS_PER_ORDER` | `150000` | Estimated gas units per order |
-| `GAS_PRICE_GWEI` | `30.0` | Default gas price (overridden at runtime) |
-| `PAPER_TRADING` | `true` | Simulate execution (overridden by `--live`) |
-| `LOG_LEVEL` | `INFO` | Logging verbosity |
+- Credentials: `PRIVATE_KEY`, `POLYMARKET_PROFILE_ADDRESS`, `SIGNATURE_TYPE`
+- Opportunity filters: `MIN_PROFIT_USD`, `MIN_ROI_PCT`, `MIN_VOLUME_FILTER`
+- Risk limits: `MAX_EXPOSURE_PER_TRADE`, `MAX_TOTAL_EXPOSURE`
+- Circuit breakers: `MAX_LOSS_PER_HOUR`, `MAX_LOSS_PER_DAY`, `MAX_CONSECUTIVE_FAILURES`
+- Runtime: `SCAN_INTERVAL_SEC`, `ORDER_TIMEOUT_SEC`, `LOG_LEVEL`
+- Execution controls: `USE_FAK_ORDERS`, `MAX_LEGS_PER_OPPORTUNITY`
+- Data/perf: `WS_ENABLED`, `BOOK_CACHE_MAX_AGE_SEC`, `BOOK_FETCH_WORKERS`
+- Optional cross-platform: `CROSS_PLATFORM_ENABLED`, `KALSHI_*`,
+  `CROSS_PLATFORM_MIN_CONFIDENCE`, `CROSS_PLATFORM_MANUAL_MAP`
 
-## Tests
+`.env.example` contains a starter subset; advanced options are documented by field
+names and defaults in `config.py`.
+
+## Output Files
+
+- `status.md`: rolling markdown dashboard (current cycle + recent history).
+- `pnl_ledger.json`: append-only NDJSON trade ledger (paper/live modes).
+- `--json-log <path>`: optional structured runtime log.
+
+## Testing
+
+Use `PYTHONPATH=.` because imports are flat modules:
 
 ```bash
-# Run all tests
 PYTHONPATH=. uv run python -m pytest tests/ -v
-
-# Run with coverage
 PYTHONPATH=. uv run python -m pytest tests/ --cov=. --cov-report=term-missing
 ```
 
-100 tests across 11 test files covering:
+## Safety Notes
 
-- **Unit tests**: data models, config validation, scanner math, Kelly sizing, circuit breakers, safety checks, execution engine, P&L tracking
-- **Integration tests**: Gamma API with mocked HTTP (respx), full scan-detect-size-execute pipeline, circuit breaker halt behavior, fair-market no-opportunity scenarios, structured JSON logging
+- Execution path revalidates freshness, depth, edge, and gas before placing orders.
+- Circuit breaker halts the bot on configured loss/failure thresholds.
+- Partial fill/unwind failure paths are explicit and surfaced in logs.
 
-## Risks
-
-| Risk | Mitigation |
-|------|------------|
-| **Leg risk** (partial fill) | Automatic unwind via FOK market orders, tight timeout |
-| **Stale quotes** | Re-check prices before every execution |
-| **Gas spikes** | Gas cost included in profitability calculation |
-| **Oracle disputes** | Monitor UMA Optimistic Oracle, avoid markets near resolution |
-| **Rate limiting** | Respects Polymarket CLOB rate limits (3,500 orders/10s burst) |
-| **Smart contract risk** | Uses official py-clob-client SDK, conservative position sizes |
-
-## License
-
-MIT
+This project trades real money in live mode. Validate behavior in `--dry-run` and
+paper modes first, and review risk limits before enabling `--live`.

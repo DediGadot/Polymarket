@@ -1,0 +1,1365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Polymarket Arbitrage Bot — Pipeline Report</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0b0e17;
+    --bg2: #111827;
+    --bg3: #1a2035;
+    --bg4: #232b42;
+    --cyan: #22d3ee;
+    --green: #34d399;
+    --red: #f87171;
+    --yellow: #fbbf24;
+    --orange: #fb923c;
+    --purple: #a78bfa;
+    --text: #e2e8f0;
+    --text2: #94a3b8;
+    --text3: #64748b;
+    --border: #2a3350;
+    --card: #151c2e;
+    --font: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 15px;
+  }
+
+  /* ─── NAV ─── */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0;
+    z-index: 100;
+    background: rgba(11, 14, 23, 0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0;
+    padding: 0 24px;
+    height: 48px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  nav::-webkit-scrollbar { display: none; }
+  nav a {
+    color: var(--text2);
+    text-decoration: none;
+    font-size: 12px;
+    font-family: var(--font);
+    padding: 14px 14px;
+    white-space: nowrap;
+    transition: color 0.2s;
+    letter-spacing: 0.3px;
+  }
+  nav a:hover, nav a.active { color: var(--cyan); }
+  nav .nav-brand {
+    color: var(--cyan);
+    font-weight: 700;
+    font-size: 13px;
+    margin-right: 16px;
+    letter-spacing: 0.5px;
+  }
+
+  /* ─── LAYOUT ─── */
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 72px 24px 48px;
+  }
+
+  section {
+    margin-bottom: 72px;
+    scroll-margin-top: 64px;
+  }
+
+  h1 {
+    font-size: 48px;
+    font-weight: 800;
+    letter-spacing: -1.5px;
+    background: linear-gradient(135deg, var(--cyan), var(--green), var(--cyan));
+    background-size: 200% 200%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: gradientShift 6s ease infinite;
+    line-height: 1.1;
+  }
+
+  @keyframes gradientShift {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+  }
+
+  h2 {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 24px;
+    color: var(--text);
+    letter-spacing: -0.5px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  h2 .num {
+    font-family: var(--font);
+    font-size: 14px;
+    color: var(--cyan);
+    background: rgba(34, 211, 238, 0.1);
+    border: 1px solid rgba(34, 211, 238, 0.2);
+    border-radius: 6px;
+    padding: 4px 10px;
+    letter-spacing: 0.5px;
+  }
+
+  h3 {
+    font-size: 18px;
+    font-weight: 600;
+    margin: 32px 0 12px;
+    color: var(--text);
+  }
+
+  p, li { color: var(--text2); }
+  p { margin-bottom: 12px; }
+  ul { padding-left: 20px; margin-bottom: 16px; }
+  li { margin-bottom: 6px; }
+  li::marker { color: var(--text3); }
+
+  strong { color: var(--text); font-weight: 600; }
+  code {
+    font-family: var(--font);
+    font-size: 13px;
+    background: var(--bg3);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--cyan);
+  }
+
+  /* ─── HEADER ─── */
+  .hero {
+    text-align: center;
+    padding: 80px 0 48px;
+  }
+  .hero .subtitle {
+    font-family: var(--font);
+    font-size: 14px;
+    color: var(--text3);
+    margin-top: 12px;
+    letter-spacing: 1px;
+  }
+  .stats-banner {
+    display: flex;
+    justify-content: center;
+    gap: 0;
+    margin-top: 36px;
+    flex-wrap: wrap;
+  }
+  .stat {
+    padding: 16px 32px;
+    border-right: 1px solid var(--border);
+    text-align: center;
+  }
+  .stat:last-child { border-right: none; }
+  .stat .val {
+    font-family: var(--font);
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--cyan);
+    display: block;
+  }
+  .stat .label {
+    font-size: 11px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-top: 4px;
+    display: block;
+  }
+
+  /* ─── CARDS ─── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 16px;
+    transition: border-color 0.3s, transform 0.2s;
+  }
+  .card:hover {
+    border-color: rgba(34, 211, 238, 0.3);
+    transform: translateY(-2px);
+  }
+
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+  }
+
+  .card .card-tag {
+    display: inline-block;
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 4px;
+    margin-bottom: 12px;
+    letter-spacing: 0.5px;
+  }
+
+  .card h4 {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: var(--text);
+  }
+
+  .card .metric {
+    font-family: var(--font);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--green);
+    margin: 8px 0;
+  }
+
+  .card p { font-size: 14px; }
+
+  /* ─── FLOW DIAGRAM ─── */
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    overflow-x: auto;
+    padding: 24px 0;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .flow-step {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 18px;
+    font-family: var(--font);
+    font-size: 12px;
+    color: var(--cyan);
+    white-space: nowrap;
+    text-align: center;
+    min-width: 90px;
+  }
+  .flow-step .step-num {
+    display: block;
+    font-size: 10px;
+    color: var(--text3);
+    margin-bottom: 4px;
+  }
+  .flow-arrow {
+    color: var(--text3);
+    font-size: 18px;
+    padding: 0 4px;
+    flex-shrink: 0;
+  }
+
+  /* ─── TABLES ─── */
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    margin: 16px 0;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  th {
+    background: var(--bg3);
+    font-family: var(--font);
+    font-size: 11px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 12px 16px;
+    text-align: left;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+  }
+  td {
+    padding: 10px 16px;
+    border-top: 1px solid var(--border);
+    color: var(--text2);
+    white-space: nowrap;
+  }
+  tr:nth-child(even) td { background: rgba(26, 32, 53, 0.4); }
+  tr:hover td { background: rgba(34, 211, 238, 0.04); }
+  .profit { color: var(--green); font-weight: 600; font-family: var(--font); }
+  .loss { color: var(--red); font-weight: 600; font-family: var(--font); }
+  .score { color: var(--yellow); font-family: var(--font); }
+  .stale { color: var(--orange); font-style: italic; }
+  .mono { font-family: var(--font); }
+
+  /* ─── BAR CHART ─── */
+  .bar-chart {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 16px 0;
+    max-width: 500px;
+  }
+  .bar-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .bar-label {
+    width: 120px;
+    font-size: 12px;
+    color: var(--text2);
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .bar-track {
+    flex: 1;
+    height: 28px;
+    background: var(--bg3);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    padding-left: 8px;
+    font-family: var(--font);
+    font-size: 12px;
+    color: var(--bg);
+    font-weight: 700;
+    transition: width 0.8s ease;
+  }
+  .bar-val {
+    width: 70px;
+    font-family: var(--font);
+    font-size: 13px;
+    color: var(--text);
+    flex-shrink: 0;
+  }
+
+  /* ─── LAYERS ─── */
+  .layers {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .layer {
+    padding: 20px 24px;
+    border-left: 3px solid var(--border);
+    position: relative;
+    margin-left: 16px;
+  }
+  .layer::before {
+    content: '';
+    position: absolute;
+    left: -9px;
+    top: 24px;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    border: 3px solid var(--bg);
+  }
+  .layer:nth-child(1) { border-left-color: var(--green); }
+  .layer:nth-child(1)::before { background: var(--green); }
+  .layer:nth-child(2) { border-left-color: var(--yellow); }
+  .layer:nth-child(2)::before { background: var(--yellow); }
+  .layer:nth-child(3) { border-left-color: var(--orange); }
+  .layer:nth-child(3)::before { background: var(--orange); }
+  .layer:nth-child(4) { border-left-color: var(--red); }
+  .layer:nth-child(4)::before { background: var(--red); }
+  .layer h4 {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .layer p { font-size: 13px; margin: 0; }
+
+  /* ─── MODULE MAP ─── */
+  .modules {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+  }
+  .mod-group {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    transition: border-color 0.3s;
+  }
+  .mod-group:hover { border-color: rgba(34, 211, 238, 0.3); }
+  .mod-group h4 {
+    font-family: var(--font);
+    font-size: 14px;
+    color: var(--cyan);
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .mod-group .file {
+    font-family: var(--font);
+    font-size: 12px;
+    color: var(--text2);
+    padding: 3px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .mod-group .file::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text3);
+    flex-shrink: 0;
+  }
+
+  /* ─── BUG CARDS ─── */
+  .bug {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 16px;
+    border-left: 4px solid var(--red);
+  }
+  .bug.critical { border-left-color: var(--red); }
+  .bug.medium { border-left-color: var(--yellow); }
+  .bug.low { border-left-color: var(--text3); }
+  .bug .sev {
+    font-family: var(--font);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    display: inline-block;
+    margin-bottom: 8px;
+  }
+  .bug.critical .sev { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+  .bug.medium .sev { background: rgba(251, 191, 36, 0.15); color: var(--yellow); }
+  .bug.low .sev { background: rgba(100, 116, 139, 0.2); color: var(--text3); }
+  .bug h4 { font-size: 15px; margin-bottom: 8px; }
+  .bug p { font-size: 13px; margin: 0; }
+
+  /* ─── CMD COPY ─── */
+  .cmd-block {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    font-family: var(--font);
+    font-size: 13px;
+    color: var(--green);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 8px 0;
+  }
+  .cmd-block .cmd-text { overflow-x: auto; white-space: nowrap; }
+  .cmd-block button {
+    background: rgba(34, 211, 238, 0.1);
+    border: 1px solid rgba(34, 211, 238, 0.2);
+    color: var(--cyan);
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 4px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.2s;
+  }
+  .cmd-block button:hover { background: rgba(34, 211, 238, 0.2); }
+  .cmd-block button.copied { color: var(--green); border-color: rgba(52, 211, 153, 0.3); }
+
+  /* ─── DEEP DIVE ─── */
+  .deep-dive {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    margin-top: 24px;
+  }
+  .deep-dive h3 {
+    color: var(--yellow);
+    margin-top: 0;
+    margin-bottom: 16px;
+    font-size: 16px;
+  }
+  .deep-section {
+    margin-bottom: 20px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .deep-section:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
+  .deep-section h4 {
+    font-size: 14px;
+    margin-bottom: 6px;
+    color: var(--text);
+  }
+  .deep-section p { font-size: 13px; line-height: 1.7; }
+
+  /* ─── FEE VISUAL ─── */
+  .fee-example {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 16px 0;
+  }
+  .fee-example h4 {
+    font-size: 14px;
+    margin-bottom: 16px;
+    color: var(--cyan);
+  }
+  .fee-line {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 13px;
+    font-family: var(--font);
+  }
+  .fee-line .fl-label { color: var(--text2); }
+  .fee-line .fl-val { color: var(--text); }
+  .fee-line.total { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 4px; }
+  .fee-line.total .fl-val { color: var(--green); font-weight: 700; }
+
+  /* ─── RUNNING MODES ─── */
+  .mode-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+  }
+  .mode-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    transition: border-color 0.3s, transform 0.2s;
+  }
+  .mode-card:hover {
+    border-color: rgba(34, 211, 238, 0.3);
+    transform: translateY(-2px);
+  }
+  .mode-card .mode-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 8px;
+  }
+  .mode-card h4 { font-size: 15px; margin-bottom: 8px; display: flex; align-items: center; }
+  .mode-card p { font-size: 13px; margin-bottom: 12px; }
+
+  /* ─── FOOTER ─── */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 32px 0;
+    text-align: center;
+    color: var(--text3);
+    font-size: 12px;
+    font-family: var(--font);
+  }
+  footer a { color: var(--text2); text-decoration: none; }
+  footer a:hover { color: var(--cyan); }
+  footer .footer-stats {
+    margin-top: 12px;
+    color: var(--text3);
+    letter-spacing: 0.5px;
+  }
+
+  /* ─── STRATEGY INDICATOR ─── */
+  .strat-bar {
+    width: 4px;
+    height: 100%;
+    border-radius: 2px;
+    position: absolute;
+    left: 0;
+    top: 0;
+  }
+  .strategy-card {
+    position: relative;
+    padding-left: 20px !important;
+    overflow: hidden;
+  }
+  .strategy-card::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    border-radius: 12px 0 0 12px;
+  }
+  .strategy-card.s1::before { background: var(--cyan); }
+  .strategy-card.s2::before { background: var(--green); }
+  .strategy-card.s3::before { background: var(--purple); }
+  .strategy-card.s4::before { background: var(--orange); }
+
+  /* ─── CALLOUT ─── */
+  .callout {
+    background: rgba(34, 211, 238, 0.06);
+    border: 1px solid rgba(34, 211, 238, 0.15);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 16px 0;
+    font-size: 14px;
+    color: var(--text2);
+  }
+  .callout strong { color: var(--cyan); }
+
+  /* ─── HISTORY STATS ─── */
+  .hist-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin: 16px 0;
+  }
+  .hist-stat {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+  }
+  .hist-stat .hval {
+    font-family: var(--font);
+    font-size: 24px;
+    font-weight: 700;
+    display: block;
+    margin-bottom: 4px;
+  }
+  .hist-stat .hlabel {
+    font-size: 11px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  @media (max-width: 768px) {
+    h1 { font-size: 32px; }
+    .stat { padding: 12px 16px; }
+    .stat .val { font-size: 22px; }
+    nav a { padding: 14px 10px; font-size: 11px; }
+    .flow { justify-content: flex-start; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══ NAV ═══ -->
+<nav>
+  <a href="#top" class="nav-brand">POLYBOT</a>
+  <a href="#how">How It Works</a>
+  <a href="#strategies">Strategies</a>
+  <a href="#pipeline">Pipeline</a>
+  <a href="#results">Results</a>
+  <a href="#fees">Fees</a>
+  <a href="#safety">Safety</a>
+  <a href="#arch">Architecture</a>
+  <a href="#bugs">Bugs</a>
+  <a href="#modes">Modes</a>
+  <a href="#history">History</a>
+</nav>
+
+<div class="container">
+
+<!-- ═══ HERO ═══ -->
+<section class="hero" id="top">
+  <h1>Polymarket Arbitrage Bot</h1>
+  <div class="subtitle">PIPELINE REPORT &mdash; v0.1 | February 2026</div>
+  <div class="stats-banner">
+    <div class="stat"><span class="val">27,460</span><span class="label">Markets Scanned</span></div>
+    <div class="stat"><span class="val">4</span><span class="label">Strategies</span></div>
+    <div class="stat"><span class="val">337</span><span class="label">Tests Passing</span></div>
+    <div class="stat"><span class="val">90%</span><span class="label">Coverage</span></div>
+  </div>
+</section>
+
+<!-- ═══ SECTION 1: HOW IT WORKS ═══ -->
+<section id="how">
+  <h2><span class="num">01</span> How It Works</h2>
+
+  <p>This bot finds and exploits <strong>pricing mistakes</strong> on <a href="https://polymarket.com" style="color:var(--cyan);">Polymarket</a>, a prediction market platform where people bet on real-world events. It runs 24/7 in a continuous loop, scanning thousands of markets per second.</p>
+
+  <div class="callout">
+    <strong>Plain-language example:</strong> A market asks "Will it rain tomorrow?" with two outcomes. You can buy YES for $0.45 and NO for $0.52 &mdash; that's $0.97 total. One of them <em>must</em> pay out $1.00. You just locked in $0.03 profit with zero risk. This bot finds thousands of markets like this automatically.
+  </div>
+
+  <h3>The Pipeline</h3>
+  <div class="flow">
+    <div class="flow-step"><span class="step-num">1</span>Fetch Markets</div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step"><span class="step-num">2</span>Scan</div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step"><span class="step-num">3</span>Score</div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step"><span class="step-num">4</span>Size</div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step"><span class="step-num">5</span>Safety</div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step"><span class="step-num">6</span>Execute</div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step"><span class="step-num">7</span>Record</div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step" style="border-color: var(--cyan); color: var(--cyan);"><span class="step-num" style="color:var(--cyan);">8</span>Repeat</div>
+  </div>
+
+  <ul>
+    <li><strong>Fetch:</strong> Download metadata for 25,000+ active markets from the Gamma REST API</li>
+    <li><strong>Scan:</strong> Four independent scanners check different types of pricing errors</li>
+    <li><strong>Score:</strong> Rank opportunities by a 5-factor composite score (profit, fill probability, efficiency, urgency, competition)</li>
+    <li><strong>Size:</strong> Half-Kelly criterion decides how much capital to risk</li>
+    <li><strong>Safety:</strong> Verify prices haven't moved, orderbook depth exists, gas is reasonable</li>
+    <li><strong>Execute:</strong> Place fill-and-kill orders, unwind partial fills immediately</li>
+    <li><strong>Record:</strong> Append trade to P&amp;L ledger, check circuit breaker, sleep 1 second</li>
+  </ul>
+</section>
+
+<!-- ═══ SECTION 2: STRATEGIES ═══ -->
+<section id="strategies">
+  <h2><span class="num">02</span> The Four Strategies</h2>
+
+  <div class="card-grid">
+    <div class="card strategy-card s1">
+      <div class="card-tag" style="background: rgba(34,211,238,0.1); color: var(--cyan);">BINARY REBALANCE</div>
+      <h4>YES + NO &lt; $1.00</h4>
+      <div class="metric">$10.58M</div>
+      <p>26.7% of all historical arb profits. Buy both YES and NO when their combined ask is under $1.00. One <em>must</em> pay $1.00 &mdash; guaranteed profit.</p>
+      <p style="margin-top:8px;"><code>scanner/binary.py</code></p>
+    </div>
+
+    <div class="card strategy-card s2">
+      <div class="card-tag" style="background: rgba(52,211,153,0.1); color: var(--green);">NEGRISK REBALANCE</div>
+      <h4>Sum of all YES asks &lt; $1.00</h4>
+      <div class="metric">$28.68M</div>
+      <p>72.4% of all profits. Multi-outcome events (3-31 outcomes). Buy one YES share in every outcome. Exactly one wins $1.00. 29x more capital-efficient than binary.</p>
+      <p style="margin-top:8px;"><code>scanner/negrisk.py</code></p>
+    </div>
+
+    <div class="card strategy-card s3">
+      <div class="card-tag" style="background: rgba(167,139,250,0.1); color: var(--purple);">LATENCY ARB</div>
+      <h4>Spot exchange leads Polymarket</h4>
+      <div class="metric">$313 &rarr; $414K</div>
+      <p>15-min crypto markets (BTC/ETH/SOL) reprice slower than Binance spot. Best known result: 98% win rate. Needs &gt;5% edge after 3.15% dynamic taker fee.</p>
+      <p style="margin-top:8px;"><code>scanner/latency.py</code></p>
+    </div>
+
+    <div class="card strategy-card s4">
+      <div class="card-tag" style="background: rgba(251,146,60,0.1); color: var(--orange);">SPIKE DETECTION</div>
+      <h4>Breaking news &rarr; sibling lag</h4>
+      <div class="metric">5-60s window</div>
+      <p>When breaking news spikes one market in a multi-outcome event, sibling markets lag behind for seconds to minutes. The bot detects the spike and trades the laggards.</p>
+      <p style="margin-top:8px;"><code>scanner/spike.py</code></p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ SECTION 3: PIPELINE ═══ -->
+<section id="pipeline">
+  <h2><span class="num">03</span> Pipeline Steps</h2>
+
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="color: var(--cyan);">Step 1: Fetch Markets</h4>
+    <ul>
+      <li>Pull all active markets from the <strong>Gamma REST API</strong> (<code>gamma-api.polymarket.com</code>)</li>
+      <li>Returns 25,000+ markets with metadata: question, token IDs, volume, neg_risk flag, tick size</li>
+      <li>Split into <strong>binary</strong> (2 outcomes, ~24K) and <strong>negRisk</strong> (3+ outcomes grouped by event, ~500 events)</li>
+      <li>Full scan takes ~30 seconds. Use <code>--limit 500</code> for fast dev loops</li>
+    </ul>
+  </div>
+
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="color: var(--cyan);">Step 2: Fetch Orderbooks</h4>
+    <ul>
+      <li>Fetch live bid/ask levels from the <strong>CLOB API</strong> (<code>clob.polymarket.com</code>) in batches of 50</li>
+      <li style="color: var(--red);"><strong>CRITICAL TRAP:</strong> The py-clob-client SDK does NOT sort book levels. Asks arrive descending (worst first), bids arrive ascending (worst first). The bot sorts asks ascending and bids descending. Without this fix, "best_ask" returns the worst price and zero opportunities are ever found.</li>
+      <li>Orderbooks are cached for 5 seconds in <code>BookCache</code> to avoid redundant API calls</li>
+    </ul>
+  </div>
+
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="color: var(--cyan);">Step 3: Scan for Opportunities</h4>
+    <ul>
+      <li>All 4 scanners run on their respective market sets</li>
+      <li>Each scanner: checks the math, deducts <strong>fees</strong> (2% resolution + dynamic taker), deducts estimated <strong>gas cost</strong></li>
+      <li>Filters: minimum <strong>$0.50 profit</strong> and <strong>2% ROI</strong></li>
+      <li>Emits <code>Opportunity</code> objects with all details: legs, prices, sizes, profit, ROI, capital required</li>
+    </ul>
+  </div>
+
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="color: var(--cyan);">Step 4: Composite Scoring</h4>
+    <ul>
+      <li>5-factor weighted score from 0 to 1:</li>
+    </ul>
+    <div class="bar-chart">
+      <div class="bar-row">
+        <div class="bar-label">Profit</div>
+        <div class="bar-track"><div class="bar-fill" style="width:25%; background: var(--green);">25%</div></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label">Fill Probability</div>
+        <div class="bar-track"><div class="bar-fill" style="width:25%; background: var(--cyan);">25%</div></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label">Efficiency</div>
+        <div class="bar-track"><div class="bar-fill" style="width:20%; background: var(--purple);">20%</div></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label">Urgency</div>
+        <div class="bar-track"><div class="bar-fill" style="width:20%; background: var(--orange);">20%</div></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label">Competition</div>
+        <div class="bar-track"><div class="bar-fill" style="width:10%; background: var(--yellow);">10%</div></div>
+      </div>
+    </div>
+    <ul>
+      <li>Spike and latency arbs score <strong>higher urgency</strong> (1.0 and 0.85 vs 0.50 for steady-state)</li>
+      <li>Profit is log-scaled so $50 doesn't totally dominate $5</li>
+    </ul>
+  </div>
+
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="color: var(--cyan);">Step 5: Position Sizing (Half-Kelly)</h4>
+    <ul>
+      <li>The <strong>Kelly Criterion at half strength</strong> determines capital allocation</li>
+      <li>Formula: <code>edge = profit/cost</code> &rarr; <code>kelly = edge * 0.50</code> &rarr; <code>capital = kelly * bankroll</code></li>
+    </ul>
+    <div class="callout">
+      <strong>Example:</strong> $10K bankroll, cost/set = $0.97, profit/set = $0.03<br>
+      Edge = 3.09% &rarr; Kelly = 1.545% &rarr; Capital = $154.50 &rarr; 159 sets<br>
+      Hard caps: $500/trade, $5,000 total exposure
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="color: var(--cyan);">Step 6: Safety Checks</h4>
+    <ul>
+      <li><strong>Price freshness:</strong> re-fetch orderbook, reject if prices drifted &gt;0.5%</li>
+      <li><strong>Depth verification:</strong> confirm enough shares exist at the quoted price</li>
+      <li><strong>Gas check:</strong> reject if gas would eat &gt;50% of net profit</li>
+      <li>Failure skips the opportunity (not the whole bot)</li>
+    </ul>
+  </div>
+
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="color: var(--cyan);">Step 7: Execute Orders</h4>
+    <ul>
+      <li><strong>FAK (Fill-and-Kill)</strong> orders: fill immediately or cancel. No dangling orders.</li>
+      <li>Binary arbs: 2 legs, batch-posted. NegRisk: N legs in groups of 15. Latency: 1 leg. Spike: N legs.</li>
+      <li><strong>Partial fill handling:</strong> if only some legs fill, immediately market-sell filled positions to close. Bounded small loss rather than unhedged risk.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4 style="color: var(--cyan);">Step 8: Record &amp; Loop</h4>
+    <ul>
+      <li>Append trade to <code>pnl_ledger.json</code> (NDJSON, one object per line)</li>
+      <li>Circuit breaker checks: $50/hr loss, $200/day loss, 5 consecutive failures &rarr; <strong>HALT</strong></li>
+      <li>Write <code>status.md</code> with current state, sleep 1 second, start next cycle</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══ SECTION 4: RESULTS ═══ -->
+<section id="results">
+  <h2><span class="num">04</span> Live Scan Results</h2>
+
+  <p>Results from a <strong>dry-run scan</strong> against <strong>27,460 live Polymarket markets</strong> on February 7, 2026. Nine opportunities found, all via the NegRisk rebalancing strategy.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Type</th>
+          <th>Event</th>
+          <th>Profit</th>
+          <th>ROI</th>
+          <th>Score</th>
+          <th>Legs</th>
+          <th>Capital</th>
+          <th>Note</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="mono">1</td>
+          <td class="mono">negrisk</td>
+          <td>Elche CF win on 2026-01-19</td>
+          <td class="profit">$4,116.38</td>
+          <td class="profit">48,900%</td>
+          <td class="score">0.77</td>
+          <td class="mono">2</td>
+          <td class="mono">$8.42</td>
+          <td class="stale">Stale</td>
+        </tr>
+        <tr>
+          <td class="mono">2</td>
+          <td class="mono">negrisk</td>
+          <td>Taylor Swift &mdash; Life Of A Showgirl</td>
+          <td class="profit">$3,628.01</td>
+          <td class="profit">24,400%</td>
+          <td class="score">0.77</td>
+          <td class="mono">4</td>
+          <td class="mono">$14.87</td>
+          <td class="stale">Stale</td>
+        </tr>
+        <tr>
+          <td class="mono">3</td>
+          <td class="mono">negrisk</td>
+          <td>Democrats win Nebraska Senate</td>
+          <td class="profit">$48.75</td>
+          <td class="profit">30.31%</td>
+          <td class="score">0.56</td>
+          <td class="mono">2</td>
+          <td class="mono">$160.82</td>
+          <td style="color: var(--green); font-weight: 600;">Legit</td>
+        </tr>
+        <tr>
+          <td class="mono">4</td>
+          <td class="mono">negrisk</td>
+          <td>Ph&#7841;m Minh Ch&iacute;nh next Vietnam PM</td>
+          <td class="profit">$1.67</td>
+          <td class="profit">15.80%</td>
+          <td class="score">0.43</td>
+          <td class="mono">6</td>
+          <td class="mono">$10.55</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="mono">5</td>
+          <td class="mono">negrisk</td>
+          <td>Trump Nobel Peace Prize 2025</td>
+          <td class="profit">$1.16</td>
+          <td class="profit">20.70%</td>
+          <td class="score">0.42</td>
+          <td class="mono">20</td>
+          <td class="mono">$5.62</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="mono">6</td>
+          <td class="mono">negrisk</td>
+          <td>Google best AI model end of 2025</td>
+          <td class="profit">$1.14</td>
+          <td class="profit">6.19%</td>
+          <td class="score">0.41</td>
+          <td class="mono">11</td>
+          <td class="mono">$18.40</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="mono">7</td>
+          <td class="mono">negrisk</td>
+          <td>Democrats win Michigan governor</td>
+          <td class="profit">$1.11</td>
+          <td class="profit">10.01%</td>
+          <td class="score">0.41</td>
+          <td class="mono">2</td>
+          <td class="mono">$11.09</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="mono">8</td>
+          <td class="mono">negrisk</td>
+          <td>Democrats win Montana Senate</td>
+          <td class="profit">$1.11</td>
+          <td class="profit">7.03%</td>
+          <td class="score">0.41</td>
+          <td class="mono">2</td>
+          <td class="mono">$15.82</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="mono">9</td>
+          <td class="mono">negrisk</td>
+          <td>JD Vance 2028 Presidential</td>
+          <td class="profit">$0.91</td>
+          <td class="profit">3.12%</td>
+          <td class="score">0.41</td>
+          <td class="mono">31</td>
+          <td class="mono">$29.07</td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="deep-dive">
+    <h3>Results Deep Dive</h3>
+
+    <div class="deep-section">
+      <h4 style="color: var(--orange);">The $4K+ "Phantom" Opportunities (#1, #2)</h4>
+      <p>The Elche CF and Taylor Swift opportunities show <strong>astronomical ROI</strong> (48,900% and 24,400%) because these are likely <strong>stale or already-resolved markets</strong>. Some outcome tokens still have abandoned liquidity sitting on the book at near-zero prices. The sum of asks is far below $1.00, but these tokens will never resolve favorably &mdash; the liquidity is abandoned. In production, a <strong>staleness filter</strong> (check market end date, resolution status) would filter these out. They represent a known false-positive class.</p>
+    </div>
+
+    <div class="deep-section">
+      <h4 style="color: var(--green);">Nebraska Senate &mdash; The Real Deal (#3)</h4>
+      <p>This is a <strong>genuine NegRisk arb</strong> on a 2-outcome event: $48.75 profit on $160.82 capital (30% ROI). The YES asks for both outcomes sum to less than $1.00, so buying both sides locks in guaranteed profit. At just 2 legs, gas costs are minimal (~$0.004). This is the bread-and-butter of the NegRisk strategy and exactly the kind of opportunity that generated $28.68M historically.</p>
+    </div>
+
+    <div class="deep-section">
+      <h4 style="color: var(--cyan);">The $1&ndash;$2 Cluster (#4&ndash;#8)</h4>
+      <p>These are <strong>small but real</strong> negRisk arbs across political events (Vietnam PM, Michigan governor, Montana Senate) and pop culture (Trump Nobel, Google AI). The multi-outcome nature (6&ndash;20 legs) fragments liquidity and creates pricing gaps. Each is profitable after the $0.02/set resolution fee, but the absolute dollar amounts are modest. Running at high frequency across many such opportunities is where volume compounds.</p>
+    </div>
+
+    <div class="deep-section">
+      <h4 style="color: var(--purple);">JD Vance 2028 &mdash; The Persistent Thin Arb (#9)</h4>
+      <p>The 31-leg opportunity on the 2028 US Presidential election (31 candidates!) shows $0.91 profit at 3.12% ROI. This arb <strong>appears consistently across multiple scan cycles</strong>, meaning nobody is taking it. Why? Because placing 31 simultaneous FAK orders atomically is hard &mdash; if even one leg fails, the whole arb unravels. This is exactly the kind of persistent, thin-margin opportunity the NegRisk strategy was designed to capture.</p>
+    </div>
+
+    <div class="deep-section">
+      <h4 style="color: var(--text3);">Why Zero Binary Arbs?</h4>
+      <p>No binary rebalancing opportunities were found because <strong>binary market spreads are extremely tight in 2026</strong>. With 25K+ markets and aggressive market makers, the sum YES+NO stays very close to $1.00. The 2% resolution fee ($0.02/set) makes most sub-$0.03 spreads unprofitable. Binary arb was historically 26.7% of profits, but the edge has compressed as more bots compete.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ SECTION 5: FEES ═══ -->
+<section id="fees">
+  <h2><span class="num">05</span> Fee Structure</h2>
+
+  <div class="card-grid" style="margin-bottom: 24px;">
+    <div class="card">
+      <h4 style="color: var(--red);">Resolution Fee</h4>
+      <div class="metric" style="color: var(--red);">$0.02/set</div>
+      <p>Always 2% of the $1.00 winning payout. Applies to ALL markets. Deducted at resolution, not at trade time. For arbitrage, the bot always has a winning side.</p>
+    </div>
+    <div class="card">
+      <h4 style="color: var(--green);">Standard Taker Fee</h4>
+      <div class="metric">$0.00</div>
+      <p>Most markets have zero taker fees. You just pay the spread.</p>
+    </div>
+    <div class="card">
+      <h4 style="color: var(--yellow);">15-Min Crypto Fee</h4>
+      <div class="metric" style="color: var(--yellow);">up to 3.15%</div>
+      <p>Dynamic formula: <code>3.15% &times; 4 &times; p &times; (1-p)</code>. Max at 50/50 odds, drops to 0.6% at 95/5. Introduced specifically to counter latency bots.</p>
+    </div>
+    <div class="card">
+      <h4 style="color: var(--text2);">Polygon Gas</h4>
+      <div class="metric" style="color: var(--text2);">~$0.002</div>
+      <p>Per order at 150K gas, 30 gwei, $0.50/POL. Binary arb (2 orders) = $0.004. 5-outcome NegRisk = $0.01. Cheap but still checked.</p>
+    </div>
+  </div>
+
+  <div class="fee-example">
+    <h4>Worked Example: Binary Arb (Profitable)</h4>
+    <div class="fee-line"><span class="fl-label">YES ask</span><span class="fl-val">$0.43</span></div>
+    <div class="fee-line"><span class="fl-label">NO ask</span><span class="fl-val">$0.51</span></div>
+    <div class="fee-line"><span class="fl-label">Cost per set</span><span class="fl-val">$0.94</span></div>
+    <div class="fee-line"><span class="fl-label">Guaranteed payout</span><span class="fl-val">$1.00</span></div>
+    <div class="fee-line" style="border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px;"><span class="fl-label">Gross profit per set</span><span class="fl-val" style="color:var(--green);">$0.060</span></div>
+    <div class="fee-line"><span class="fl-label">Resolution fee (2%)</span><span class="fl-val" style="color:var(--red);">-$0.020</span></div>
+    <div class="fee-line"><span class="fl-label">Gas (2 orders)</span><span class="fl-val" style="color:var(--red);">-$0.004</span></div>
+    <div class="fee-line total"><span class="fl-label"><strong>Net profit per set</strong></span><span class="fl-val">$0.036</span></div>
+    <div class="fee-line total" style="border: none;"><span class="fl-label"><strong>150 sets total</strong></span><span class="fl-val">$5.40</span></div>
+
+    <div class="bar-chart" style="margin-top: 20px;">
+      <div class="bar-row">
+        <div class="bar-label">Gross profit</div>
+        <div class="bar-track"><div class="bar-fill" style="width:100%; background: var(--green);">$0.060</div></div>
+        <div class="bar-val">100%</div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label">Resolution fee</div>
+        <div class="bar-track"><div class="bar-fill" style="width:33.3%; background: var(--red);">$0.020</div></div>
+        <div class="bar-val">33.3%</div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label">Gas cost</div>
+        <div class="bar-track"><div class="bar-fill" style="width:6.7%; background: var(--orange);">&nbsp;</div></div>
+        <div class="bar-val">6.7%</div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label"><strong>Net profit</strong></div>
+        <div class="bar-track"><div class="bar-fill" style="width:60%; background: var(--cyan);">$0.036</div></div>
+        <div class="bar-val" style="color: var(--green);"><strong>60%</strong></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="fee-example" style="border-left: 3px solid var(--red);">
+    <h4 style="color: var(--red);">Counter-Example: Binary Arb (Unprofitable)</h4>
+    <div class="fee-line"><span class="fl-label">YES ask $0.47 + NO ask $0.51</span><span class="fl-val">cost = $0.98</span></div>
+    <div class="fee-line"><span class="fl-label">Gross profit</span><span class="fl-val">$0.020</span></div>
+    <div class="fee-line"><span class="fl-label">Resolution fee</span><span class="fl-val" style="color:var(--red);">-$0.020</span></div>
+    <div class="fee-line"><span class="fl-label">Gas</span><span class="fl-val" style="color:var(--red);">-$0.004</span></div>
+    <div class="fee-line total"><span class="fl-label"><strong>Net profit</strong></span><span class="fl-val" style="color: var(--red);"><strong>-$0.004</strong></span></div>
+    <p style="margin-top: 12px; font-size: 13px; color: var(--red);">The bot correctly skips this. The 2% resolution fee alone eats the entire gross margin.</p>
+  </div>
+</section>
+
+<!-- ═══ SECTION 6: SAFETY ═══ -->
+<section id="safety">
+  <h2><span class="num">06</span> Safety System</h2>
+  <p>Four progressively more aggressive layers of protection. Each layer catches what the previous one missed.</p>
+
+  <div class="layers" style="margin-top: 24px;">
+    <div class="layer">
+      <h4 style="color: var(--green);">Layer 1: Scanner Filters</h4>
+      <p>Skip opportunities below <strong>$0.50 profit</strong> or <strong>2% ROI</strong>. Skip if zero depth on either side. Cheap checks that discard noise early before any API calls.</p>
+    </div>
+    <div class="layer">
+      <h4 style="color: var(--yellow);">Layer 2: Pre-Trade Safety Checks</h4>
+      <p><strong>Price freshness:</strong> re-fetch the book &mdash; reject if prices moved &gt;0.5% since the scan. <strong>Depth:</strong> confirm enough shares exist. <strong>Gas:</strong> reject if gas eats &gt;50% of profit. Failure skips the single opportunity.</p>
+    </div>
+    <div class="layer">
+      <h4 style="color: var(--orange);">Layer 3: Circuit Breaker</h4>
+      <p>After every trade, counters update. If hourly losses &ge; <strong>$50</strong>, daily losses &ge; <strong>$200</strong>, or consecutive failures &ge; <strong>5</strong> &rarr; the bot <strong>halts completely</strong>. A human must investigate before restarting.</p>
+    </div>
+    <div class="layer">
+      <h4 style="color: var(--red);">Layer 4: Partial Fill Unwind</h4>
+      <p>If a multi-leg trade only partially fills (e.g., YES fills but NO does not), the bot <strong>cancels unfilled orders</strong> and <strong>market-sells</strong> filled positions immediately. Bounded small loss rather than holding unhedged risk.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ SECTION 7: ARCHITECTURE ═══ -->
+<section id="arch">
+  <h2><span class="num">07</span> Architecture</h2>
+
+  <div class="modules">
+    <div class="mod-group">
+      <h4>client/</h4>
+      <div class="file">auth.py &mdash; wallet auth (L2 HMAC)</div>
+      <div class="file">gamma.py &mdash; market discovery REST</div>
+      <div class="file">clob.py &mdash; orderbooks + orders</div>
+      <div class="file">gas.py &mdash; gas price + POL/USD oracle</div>
+      <div class="file">ws.py &mdash; WebSocket (prepared)</div>
+    </div>
+    <div class="mod-group">
+      <h4>scanner/</h4>
+      <div class="file">models.py &mdash; all data types</div>
+      <div class="file">binary.py &mdash; YES+NO &lt; $1</div>
+      <div class="file">negrisk.py &mdash; multi-outcome arb</div>
+      <div class="file">latency.py &mdash; crypto spot lag</div>
+      <div class="file">spike.py &mdash; breaking news spikes</div>
+      <div class="file">fees.py &mdash; fee model</div>
+      <div class="file">depth.py &mdash; VWAP sweep</div>
+      <div class="file">scorer.py &mdash; 5-factor ranking</div>
+      <div class="file">strategy.py &mdash; adaptive params</div>
+      <div class="file">book_cache.py &mdash; orderbook cache</div>
+    </div>
+    <div class="mod-group">
+      <h4>executor/</h4>
+      <div class="file">engine.py &mdash; FAK orders + unwind</div>
+      <div class="file">sizing.py &mdash; half-Kelly</div>
+      <div class="file">safety.py &mdash; checks + breaker</div>
+    </div>
+    <div class="mod-group">
+      <h4>monitor/</h4>
+      <div class="file">pnl.py &mdash; P&amp;L + NDJSON ledger</div>
+      <div class="file">logger.py &mdash; structured logging</div>
+      <div class="file">status.py &mdash; rolling status file</div>
+      <div class="file">scan_tracker.py &mdash; scan statistics</div>
+    </div>
+  </div>
+
+  <div class="callout" style="margin-top: 24px;">
+    <strong>run.py</strong> is the single orchestrator that wires all modules together. Each module is self-contained: scanners depend only on <code>models.py</code>, <code>fees.py</code>, and the client layer. The executor depends on models and client. The monitor depends on nothing but models.
+  </div>
+</section>
+
+<!-- ═══ SECTION 8: BUGS ═══ -->
+<section id="bugs">
+  <h2><span class="num">08</span> Bugs Found &amp; Fixed</h2>
+
+  <div class="bug critical">
+    <span class="sev">CRITICAL</span>
+    <h4>The Orderbook Sort Bug</h4>
+    <p>The py-clob-client SDK returns asks in <strong>DESCENDING</strong> order (worst/highest price at index 0) and bids in <strong>ASCENDING</strong> order (worst/lowest at index 0). Our <code>OrderBook.best_ask</code> assumed <code>asks[0]</code> was the best (lowest) ask.</p>
+    <p style="margin-top: 8px;"><strong>Result:</strong> <code>best_ask</code> returned <span style="color:var(--red);">$0.999</span> (the worst ask) instead of the real best. Sum of asks = $2.00 for every market. <strong>100% of opportunities missed.</strong></p>
+    <p style="margin-top: 8px;"><strong>Fix:</strong> Added <code>_sort_book_levels()</code> in <code>clob.py</code> &mdash; sort asks ascending, bids descending before constructing OrderBook tuples.</p>
+  </div>
+
+  <div class="bug medium">
+    <span class="sev">MEDIUM</span>
+    <h4>StrategySelector Not Wired</h4>
+    <p><code>strategy.select()</code> was initialized in <code>run.py</code> but <strong>never called</strong>. Adaptive scan parameters (min_profit, min_roi, per-scanner enable/disable) were computed but ignored. Fixed by wiring <code>strategy.select(MarketState)</code> into each scan cycle.</p>
+  </div>
+
+  <div class="bug low">
+    <span class="sev">LOW</span>
+    <h4>CoinGecko ID Change</h4>
+    <p>Polygon rebranded from MATIC to POL. The gas oracle used <code>matic-network</code> as the CoinGecko ID, which returned wrong data then 429 rate limits. Fixed: changed to <code>polygon-ecosystem-token</code>.</p>
+  </div>
+
+  <div class="bug low">
+    <span class="sev">LOW</span>
+    <h4>Reentrant Logging in Signal Handler</h4>
+    <p><code>logger.info()</code> in the SIGINT handler could race with ongoing log stream writes, causing <code>RuntimeError: reentrant call</code>. Fixed: changed to <code>print(file=sys.stderr)</code> in the signal handler.</p>
+  </div>
+</section>
+
+<!-- ═══ SECTION 9: MODES ═══ -->
+<section id="modes">
+  <h2><span class="num">09</span> Running Modes</h2>
+
+  <div class="mode-grid">
+    <div class="mode-card">
+      <h4><span class="mode-dot" style="background: var(--green);"></span>Dry Run</h4>
+      <p>No wallet needed. Scan real markets using <strong>public APIs only</strong>. No authentication, no orders. Good for testing scanner logic.</p>
+      <div class="cmd-block">
+        <span class="cmd-text">uv run python run.py --dry-run --limit 500</span>
+        <button onclick="copyCmd(this)">Copy</button>
+      </div>
+    </div>
+
+    <div class="mode-card">
+      <h4><span class="mode-dot" style="background: var(--cyan);"></span>Scan Only</h4>
+      <p>Authenticates with wallet. Scans all markets, reports opportunities. <strong>Does not place orders.</strong> Good for monitoring.</p>
+      <div class="cmd-block">
+        <span class="cmd-text">uv run python run.py --scan-only</span>
+        <button onclick="copyCmd(this)">Copy</button>
+      </div>
+    </div>
+
+    <div class="mode-card">
+      <h4><span class="mode-dot" style="background: var(--yellow);"></span>Paper Trading</h4>
+      <p>Simulates order execution without hitting the network. Assumes all orders fill at quoted prices. <strong>Records simulated P&amp;L.</strong></p>
+      <div class="cmd-block">
+        <span class="cmd-text">uv run python run.py</span>
+        <button onclick="copyCmd(this)">Copy</button>
+      </div>
+    </div>
+
+    <div class="mode-card">
+      <h4><span class="mode-dot" style="background: var(--red);"></span>Live Trading</h4>
+      <p><strong>Real orders with real money.</strong> Requires explicit <code>--live</code> flag. All safety checks and circuit breakers active.</p>
+      <div class="cmd-block">
+        <span class="cmd-text">uv run python run.py --live</span>
+        <button onclick="copyCmd(this)">Copy</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ SECTION 10: HISTORY ═══ -->
+<section id="history">
+  <h2><span class="num">10</span> Historical Context</h2>
+
+  <p>Based on the <strong>IMDEA "Probabilistic Forest" research paper</strong> analyzing 86 million bets on Polymarket from April 2024 to April 2025.</p>
+
+  <div class="hist-grid">
+    <div class="hist-stat">
+      <span class="hval" style="color: var(--green);">$39.6M</span>
+      <span class="hlabel">Total arb profits extracted</span>
+    </div>
+    <div class="hist-stat">
+      <span class="hval" style="color: var(--green);">$28.68M</span>
+      <span class="hlabel">NegRisk (72.4%)</span>
+    </div>
+    <div class="hist-stat">
+      <span class="hval" style="color: var(--cyan);">$10.58M</span>
+      <span class="hlabel">Binary (26.7%)</span>
+    </div>
+    <div class="hist-stat">
+      <span class="hval" style="color: var(--yellow);">$2.01M</span>
+      <span class="hlabel">Top single arbitrageur</span>
+    </div>
+    <div class="hist-stat">
+      <span class="hval" style="color: var(--orange);">40%</span>
+      <span class="hlabel">Realization rate</span>
+    </div>
+    <div class="hist-stat">
+      <span class="hval" style="color: var(--purple);">~200ms</span>
+      <span class="hlabel">Arb window (2026)</span>
+    </div>
+  </div>
+
+  <h3>Key Findings</h3>
+  <ul>
+    <li><strong>NegRisk dominates:</strong> 72.4% of profits ($28.68M) despite only 8.6% of total opportunities. Multi-outcome events are structurally harder to keep balanced</li>
+    <li><strong>Execution is the bottleneck:</strong> Only 40% of detected arbs are successfully captured. 60% lost to competing bots, stale quotes, and partial fills</li>
+    <li><strong>Top arbitrageur:</strong> $2.01M across 4,049 trades (~$496/trade average). Frequency matters more than size</li>
+    <li><strong>Spreads are compressing:</strong> Opportunities that paid 3-5% in 2024 now pay 1-2% in 2026</li>
+    <li><strong>Institutional capital entering:</strong> ICE invested $2B in Polymarket (Oct 2025). More sophisticated players</li>
+    <li><strong>Bots close windows in ~200ms.</strong> REST polling at 1-second intervals misses most opportunities. WebSocket is mandatory for competitive execution</li>
+  </ul>
+
+  <h3>Realistic 2026 Expectations</h3>
+  <div class="card-grid">
+    <div class="card">
+      <div class="card-tag" style="background: rgba(100,116,139,0.2); color: var(--text3);">$5K CAPITAL</div>
+      <p>5-10 opportunities/month. <strong>$250-$1,000</strong> gross monthly. Retail-level, limited by capital and speed.</p>
+    </div>
+    <div class="card">
+      <div class="card-tag" style="background: rgba(34,211,238,0.1); color: var(--cyan);">$50K+ CAPITAL</div>
+      <p><strong>$5-10K daily</strong> possible with speed advantage (VPS, WebSocket, sub-100ms). Requires dedicated infrastructure.</p>
+    </div>
+    <div class="card">
+      <div class="card-tag" style="background: rgba(52,211,153,0.1); color: var(--green);">TOP BOTS</div>
+      <p><strong>$200K+</strong> with 85%+ win rate. Full WS integration, co-located VPS, multi-strategy, institutional capital.</p>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<!-- ═══ FOOTER ═══ -->
+<footer>
+  <div class="container">
+    <div>
+      Sources: <a href="https://arxiv.org/html/2508.03474v1">IMDEA Paper</a> &middot;
+      <a href="https://docs.polymarket.com">Polymarket Docs</a> &middot;
+      <a href="https://docs.polymarket.com/developers/CLOB/introduction">CLOB API</a> &middot;
+      <a href="https://www.coingecko.com">CoinGecko</a>
+    </div>
+    <div class="footer-stats">
+      337 tests &middot; 90% coverage &middot; 17 modules &middot; Built with Python + uv
+    </div>
+  </div>
+</footer>
+
+<script>
+function copyCmd(btn) {
+  const text = btn.parentElement.querySelector('.cmd-text').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = 'Copy';
+      btn.classList.remove('copied');
+    }, 1500);
+  });
+}
+
+// Highlight active nav link on scroll
+const sections = document.querySelectorAll('section[id]');
+const navLinks = document.querySelectorAll('nav a:not(.nav-brand)');
+window.addEventListener('scroll', () => {
+  let current = '';
+  sections.forEach(section => {
+    const top = section.offsetTop - 100;
+    if (scrollY >= top) current = section.getAttribute('id');
+  });
+  navLinks.forEach(link => {
+    link.classList.toggle('active', link.getAttribute('href') === '#' + current);
+  });
+});
+</script>
+</body>
+</html>

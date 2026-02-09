@@ -25,6 +25,7 @@ def _make_opp(
         event_id=event_id,
         legs=(leg,),
         expected_profit_per_set=0.04,
+        net_profit_per_set=0.04,
         max_sets=100.0,
         gross_profit=net_profit + 0.5,
         estimated_gas_cost=0.5,

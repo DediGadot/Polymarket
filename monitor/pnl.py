@@ -6,12 +6,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from dataclasses import dataclass, field, asdict
-from pathlib import Path
 
-from scanner.models import TradeResult
+from scanner.models import TradeResult, Side
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +64,14 @@ class PnLTracker:
 
         # Update exposure tracking
         if result.fully_filled:
-            self.current_exposure += result.opportunity.required_capital
+            # Exposure reflects deployed buy-side notional from filled legs.
+            buy_notional = 0.0
+            for leg, fill_price, fill_size in zip(
+                result.opportunity.legs, result.fill_prices, result.fill_sizes,
+            ):
+                if leg.side == Side.BUY and fill_size > 0:
+                    buy_notional += fill_price * fill_size
+            self.current_exposure += buy_notional
         else:
             # Partial fills were unwound, exposure is minimal
             pass

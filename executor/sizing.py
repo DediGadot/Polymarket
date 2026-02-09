@@ -53,7 +53,12 @@ def compute_position_size(
     if cost_per_set <= 0:
         return 0.0
 
-    edge = opportunity.expected_profit_per_set / cost_per_set
+    net_profit_per_set = opportunity.net_profit_per_set
+    if net_profit_per_set <= 0:
+        logger.info("Skipping opportunity with non-positive net profit per set: %.6f", net_profit_per_set)
+        return 0.0
+
+    edge = net_profit_per_set / cost_per_set
     odds = 1.0  # risk = cost_per_set, potential payout = cost_per_set + profit_per_set
     kelly_f = kelly_fraction(edge, odds)
 
@@ -68,6 +73,15 @@ def compute_position_size(
 
     # Must be at least 1 set
     if sets < 1.0:
+        return 0.0
+
+    # Fixed gas can dominate small Kelly sizes; skip if sized trade is net negative.
+    realized_net = net_profit_per_set * sets - opportunity.estimated_gas_cost
+    if realized_net <= 0:
+        logger.info(
+            "Skipping size %.2f: fixed gas overwhelms edge (net=$%.4f)",
+            sets, realized_net,
+        )
         return 0.0
 
     logger.info(

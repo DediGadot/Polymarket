@@ -5,9 +5,8 @@ Unit tests for monitor/pnl.py -- P&L tracking.
 import json
 import os
 import tempfile
-import pytest
 
-from monitor.pnl import PnLTracker, PnLEntry
+from monitor.pnl import PnLTracker
 from scanner.models import (
     Opportunity,
     OpportunityType,
@@ -26,6 +25,7 @@ def _make_opp():
             LegOrder("n1", Side.BUY, 0.45, 100),
         ),
         expected_profit_per_set=0.10,
+        net_profit_per_set=0.10,
         max_sets=100,
         gross_profit=10.0,
         estimated_gas_cost=0.01,
@@ -40,6 +40,36 @@ def _make_result(pnl=1.0, fully_filled=True):
         opportunity=_make_opp(),
         order_ids=["o1", "o2"],
         fill_prices=[0.45, 0.45],
+        fill_sizes=[10.0, 10.0],
+        fees=0.0,
+        gas_cost=0.01,
+        net_pnl=pnl,
+        execution_time_ms=50.0,
+        fully_filled=fully_filled,
+    )
+
+
+def _make_sell_result(pnl=1.0, fully_filled=True):
+    sell_opp = Opportunity(
+        type=OpportunityType.BINARY_REBALANCE,
+        event_id="e1",
+        legs=(
+            LegOrder("y1", Side.SELL, 0.55, 100),
+            LegOrder("n1", Side.SELL, 0.55, 100),
+        ),
+        expected_profit_per_set=0.10,
+        net_profit_per_set=0.10,
+        max_sets=100,
+        gross_profit=10.0,
+        estimated_gas_cost=0.01,
+        net_profit=9.99,
+        roi_pct=11.1,
+        required_capital=100.0,
+    )
+    return TradeResult(
+        opportunity=sell_opp,
+        order_ids=["o1", "o2"],
+        fill_prices=[0.55, 0.55],
         fill_sizes=[10.0, 10.0],
         fees=0.0,
         gas_cost=0.01,
@@ -132,3 +162,14 @@ class TestPnLTracker:
         # volume = 0.45*10 + 0.45*10 = 9.0
         tracker.record(_make_result(pnl=1.0))
         assert abs(tracker.total_volume - 9.0) < 1e-9
+
+    def test_exposure_tracks_filled_buy_capital_only(self):
+        tracker = PnLTracker(ledger_path="/dev/null")
+        tracker.record(_make_result(pnl=1.0, fully_filled=True))
+        # BUY-only trade: exposure should reflect actual filled buy notional.
+        assert tracker.current_exposure == 9.0
+
+    def test_sell_only_trade_does_not_increase_exposure(self):
+        tracker = PnLTracker(ledger_path="/dev/null")
+        tracker.record(_make_sell_result(pnl=1.0, fully_filled=True))
+        assert tracker.current_exposure == 0.0

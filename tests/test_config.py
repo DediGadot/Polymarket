@@ -2,7 +2,6 @@
 Unit tests for config.py.
 """
 
-import os
 import pytest
 from pydantic import ValidationError
 

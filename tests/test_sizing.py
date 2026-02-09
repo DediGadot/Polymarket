@@ -2,7 +2,6 @@
 Unit tests for executor/sizing.py -- Kelly criterion position sizing.
 """
 
-import pytest
 from executor.sizing import kelly_fraction, compute_position_size
 from scanner.models import (
     Opportunity,
@@ -21,6 +20,7 @@ def _make_opp(profit_per_set=0.10, max_sets=100.0, required_capital=90.0, gas=0.
             LegOrder("n1", Side.BUY, 0.45, max_sets),
         ),
         expected_profit_per_set=profit_per_set,
+        net_profit_per_set=profit_per_set,
         max_sets=max_sets,
         gross_profit=profit_per_set * max_sets,
         estimated_gas_cost=gas,
@@ -109,5 +109,35 @@ class TestComputePositionSize:
         size = compute_position_size(
             opp, bankroll=100, max_exposure_per_trade=50,
             max_total_exposure=100, current_exposure=99,
+        )
+        assert size == 0.0
+
+    def test_skip_when_fixed_gas_makes_sized_trade_negative(self):
+        """
+        Opportunity can be net-positive at max size but net-negative at the
+        smaller Kelly/exposure-constrained size once fixed gas is applied.
+        """
+        opp = Opportunity(
+            type=OpportunityType.BINARY_REBALANCE,
+            event_id="e1",
+            legs=(
+                LegOrder("y1", Side.BUY, 0.4975, 1000),
+                LegOrder("n1", Side.BUY, 0.4975, 1000),
+            ),
+            expected_profit_per_set=0.005,
+            net_profit_per_set=0.005,
+            max_sets=1000,
+            gross_profit=5.0,
+            estimated_gas_cost=3.0,
+            net_profit=2.0,
+            roi_pct=0.2,
+            required_capital=995.0,
+        )
+        size = compute_position_size(
+            opp,
+            bankroll=5000,
+            max_exposure_per_trade=500,
+            max_total_exposure=5000,
+            current_exposure=0,
         )
         assert size == 0.0

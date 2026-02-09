@@ -45,6 +45,7 @@ class WSManager:
     token_ids: list[str]
     price_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
     book_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
+    max_retries: int = MAX_RETRIES
     _running: bool = False
     _ws: object = None
     _task: asyncio.Task | None = None
@@ -113,19 +114,19 @@ class WSManager:
 
             except (websockets.ConnectionClosed, ConnectionError, OSError) as e:
                 retries += 1
-                if retries > MAX_RETRIES:
+                if retries > self.max_retries:
                     logger.error(
                         "WebSocket max retries (%d) exceeded. Last error: %s",
-                        MAX_RETRIES, e,
+                        self.max_retries, e,
                     )
                     raise RuntimeError(
-                        f"WebSocket connection failed after {MAX_RETRIES} retries: {e}"
+                        f"WebSocket connection failed after {self.max_retries} retries: {e}"
                     ) from e
 
                 backoff = min(BACKOFF_BASE * (2 ** (retries - 1)), BACKOFF_MAX)
                 logger.warning(
                     "WebSocket disconnected (retry %d/%d), backoff %.1fs: %s",
-                    retries, MAX_RETRIES, backoff, e,
+                    retries, self.max_retries, backoff, e,
                 )
                 await asyncio.sleep(backoff)
 

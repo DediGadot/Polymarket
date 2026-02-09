@@ -45,6 +45,9 @@ class ScanTracker:
         avg_roi = (sum(o.roi_pct for o in self.opportunities) / n) if n else 0.0
         avg_profit = (total_profit / n) if n else 0.0
 
+        buy_arbs = [o for o in self.opportunities if o.is_buy_arb]
+        sell_arbs = [o for o in self.opportunities if o.is_sell_arb]
+
         return {
             "total_cycles": self.total_cycles,
             "duration_sec": round(time.time() - self._session_start, 0),
@@ -57,4 +60,8 @@ class ScanTracker:
             "total_theoretical_profit_usd": round(total_profit, 2),
             "avg_roi_pct": round(avg_roi, 2),
             "avg_profit_usd": round(avg_profit, 2),
+            "buy_arb_count": len(buy_arbs),
+            "sell_arb_count": len(sell_arbs),
+            "buy_arb_profit_usd": round(sum(o.net_profit for o in buy_arbs), 2),
+            "sell_arb_profit_usd": round(sum(o.net_profit for o in sell_arbs), 2),
         }
