@@ -70,6 +70,15 @@ class TestConfig:
         assert cfg.paper_trading is False
         assert cfg.log_level == "DEBUG"
 
+    def test_non_polymarket_apis_enabled_by_default(self):
+        cfg = Config()
+        assert cfg.allow_non_polymarket_apis is True
+
+    def test_non_polymarket_apis_can_be_disabled_by_env(self, monkeypatch):
+        monkeypatch.setenv("ALLOW_NON_POLYMARKET_APIS", "false")
+        cfg = Config(_env_file=None)
+        assert cfg.allow_non_polymarket_apis is False
+
     def test_load_config_from_env(self, monkeypatch):
         """load_config should read from environment variables."""
         monkeypatch.setenv("PRIVATE_KEY", "envkey")

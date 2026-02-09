@@ -10,6 +10,18 @@ import httpx
 from client.gas import GasOracle
 
 
+class TestPolymarketOnlyDefaults:
+    @patch("client.gas.httpx.get")
+    @patch("client.gas.httpx.post")
+    def test_defaults_use_local_values_without_network(self, mock_post, mock_get):
+        oracle = GasOracle(default_gas_gwei=42.0, default_matic_usd=0.75)
+
+        assert oracle.get_gas_price_gwei() == 42.0
+        assert oracle.get_matic_usd() == 0.75
+        mock_post.assert_not_called()
+        mock_get.assert_not_called()
+
+
 class TestGetGasPriceGwei:
     @patch("client.gas.httpx.post")
     def test_fetches_from_rpc(self, mock_post):
@@ -20,7 +32,7 @@ class TestGetGasPriceGwei:
         mock_resp.raise_for_status = MagicMock()
         mock_post.return_value = mock_resp
 
-        oracle = GasOracle(cache_sec=0)
+        oracle = GasOracle(cache_sec=0, allow_network=True)
         gwei = oracle.get_gas_price_gwei()
         assert abs(gwei - 30.0) < 0.1
         mock_post.assert_called_once()
@@ -33,7 +45,7 @@ class TestGetGasPriceGwei:
         mock_resp.raise_for_status = MagicMock()
         mock_post.return_value = mock_resp
 
-        oracle = GasOracle(cache_sec=60.0)
+        oracle = GasOracle(cache_sec=60.0, allow_network=True)
         oracle.get_gas_price_gwei()
         oracle.get_gas_price_gwei()
         assert mock_post.call_count == 1
@@ -43,7 +55,7 @@ class TestGetGasPriceGwei:
         """Should return default on RPC failure."""
         mock_post.side_effect = httpx.ConnectError("Connection refused")
 
-        oracle = GasOracle(default_gas_gwei=50.0)
+        oracle = GasOracle(default_gas_gwei=50.0, allow_network=True)
         gwei = oracle.get_gas_price_gwei()
         assert gwei == 50.0
 
@@ -57,7 +69,7 @@ class TestGetMaticUsd:
         mock_resp.raise_for_status = MagicMock()
         mock_get.return_value = mock_resp
 
-        oracle = GasOracle(cache_sec=0)
+        oracle = GasOracle(cache_sec=0, allow_network=True)
         price = oracle.get_matic_usd()
         assert abs(price - 0.85) < 0.01
 
@@ -69,7 +81,7 @@ class TestGetMaticUsd:
         mock_resp.raise_for_status = MagicMock()
         mock_get.return_value = mock_resp
 
-        oracle = GasOracle(cache_sec=60.0)
+        oracle = GasOracle(cache_sec=60.0, allow_network=True)
         oracle.get_matic_usd()
         oracle.get_matic_usd()
         assert mock_get.call_count == 1
@@ -79,7 +91,7 @@ class TestGetMaticUsd:
         """Should return default on API failure."""
         mock_get.side_effect = httpx.ConnectError("Connection refused")
 
-        oracle = GasOracle(default_matic_usd=0.60)
+        oracle = GasOracle(default_matic_usd=0.60, allow_network=True)
         price = oracle.get_matic_usd()
         assert price == 0.60
 
@@ -99,7 +111,7 @@ class TestEstimateCostUsd:
         mock_matic.raise_for_status = MagicMock()
         mock_get.return_value = mock_matic
 
-        oracle = GasOracle(cache_sec=0)
+        oracle = GasOracle(cache_sec=0, allow_network=True)
         cost = oracle.estimate_cost_usd(n_orders=2, gas_per_order=150_000)
         # 2 * 150000 * 30 * 1e9 / 1e18 * 0.50 = 0.0045
         assert abs(cost - 0.0045) < 0.001

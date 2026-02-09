@@ -40,6 +40,9 @@ class Config(BaseSettings):
     # Modes
     paper_trading: bool = True
     log_level: str = "INFO"
+    # Default behavior: allow external market data integrations (Binance/CoinGecko/Kalshi).
+    # Set false to force strict Polymarket-only mode.
+    allow_non_polymarket_apis: bool = True
 
     # Gas estimation
     gas_per_order: int = 150_000
@@ -66,6 +69,7 @@ class Config(BaseSettings):
 
     # Depth Sweep + Latency Arb (Iteration 3)
     target_size_usd: float = 100.0
+    # Requires allow_non_polymarket_apis=true (uses Binance spot API).
     latency_enabled: bool = True
     spot_price_cache_sec: float = 2.0
     latency_min_edge_pct: float = 5.0
@@ -80,6 +84,7 @@ class Config(BaseSettings):
     kalshi_private_key_path: str = ""
     kalshi_host: str = "https://trading-api.kalshi.com/trade-api/v2"
     kalshi_demo: bool = False
+    # Requires allow_non_polymarket_apis=true (uses Kalshi API).
     cross_platform_enabled: bool = False
     cross_platform_min_confidence: float = 0.90
     cross_platform_manual_map: str = "cross_platform_map.json"

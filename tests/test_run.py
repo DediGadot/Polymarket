@@ -176,6 +176,32 @@ class TestExecuteSingle:
         assert first_cross_check.args[2] == kalshi_books
 
 
+class TestPolymarketOnlyMode:
+    def test_disables_external_scanners_when_flag_off(self):
+        cfg = Config(
+            allow_non_polymarket_apis=False,
+            latency_enabled=True,
+            cross_platform_enabled=True,
+        )
+
+        run._enforce_polymarket_only_mode(cfg)
+
+        assert cfg.latency_enabled is False
+        assert cfg.cross_platform_enabled is False
+
+    def test_keeps_external_scanners_when_flag_on(self):
+        cfg = Config(
+            allow_non_polymarket_apis=True,
+            latency_enabled=True,
+            cross_platform_enabled=True,
+        )
+
+        run._enforce_polymarket_only_mode(cfg)
+
+        assert cfg.latency_enabled is True
+        assert cfg.cross_platform_enabled is True
+
+
 class TestShutdownCleanup:
     @patch("run.cancel_all")
     def test_live_mode_cancels_open_orders(self, mock_cancel_all):

@@ -1,6 +1,6 @@
 # Polymarket Arbitrage Bot -- Status
 
-*Updated 2026-02-09 10:29:29*
+*Updated 2026-02-09 11:25:10*
 
 ## How the Pipeline Works
 
@@ -77,41 +77,41 @@ The bot runs in a continuous loop. Each iteration is called a **cycle**:
 | Field                      | Value                                    |
 |----------------------------|------------------------------------------|
 | Mode                       | DRY-RUN (public APIs only, no execution) |
-| Uptime                     | 26m 8s                                   |
-| Cycle                      | 140                                      |
-| Markets scanned            | 14,246                                   |
+| Uptime                     | 1h 21m                                   |
+| Cycle                      | 446                                      |
+| Markets scanned            | 14,223                                   |
 | Opportunities (this cycle) | 2                                        |
-| Opportunities (session)    | 68                                       |
+| Opportunities (session)    | 314                                      |
 
 ## Opportunities This Cycle
 
-| # | Type                     | Event                                        | Profit  | ROI    | Score | Legs | Capital |
-|---|--------------------------|----------------------------------------------|---------|--------|-------|------|---------|
-| 1 | [SELL] negrisk_rebalance | Will Derby County FC win on 2026-02-14?      | $280.44 | 66.99% | 0.66  | 5    | $418.60 |
-| 2 | [SELL] negrisk_rebalance | Will Charlton Athletic FC win on 2026-02-14? | $28.70  | 30.98% | 0.56  | 4    | $92.64  |
+| # | Type                     | Event                                              | Profit | ROI    | Score | Legs | Capital |
+|---|--------------------------|----------------------------------------------------|--------|--------|-------|------|---------|
+| 1 | [SELL] negrisk_rebalance | Will Galatasaray SK win on 2026-02-17?             | $3.99  | 68.40% | 0.40  | 5    | $5.84   |
+| 2 | [SELL] negrisk_rebalance | Will the price of Bitcoin be less than $60,000 ... | $1.33  | 26.53% | 0.35  | 14   | $5.00   |
 
 ## Recent Cycles
 
 | Cycle | Time     | Markets | Opps | Best Type         | Best ROI | Best Profit | Best Event                               |
 |-------|----------|---------|------|-------------------|----------|-------------|------------------------------------------|
-| 140   | 10:29:29 | 14,246  | 2    | negrisk_rebalance | 66.99%   | $280.44     | Will Derby County FC win on 2026-02-14?  |
-| 139   | 10:29:20 | 14,246  | 2    | negrisk_rebalance | 66.99%   | $280.44     | Will Derby County FC win on 2026-02-14?  |
-| 138   | 10:29:11 | 14,246  | 3    | negrisk_rebalance | 66.99%   | $280.44     | Will Derby County FC win on 2026-02-14?  |
-| 137   | 10:28:42 | 14,253  | 4    | negrisk_rebalance | 95.43%   | $280.44     | Will Derby County FC win on 2026-02-14?  |
-| 135   | 10:28:20 | 14,253  | 3    | negrisk_rebalance | 95.43%   | $280.44     | Will Derby County FC win on 2026-02-14?  |
-| 134   | 10:28:11 | 14,253  | 3    | negrisk_rebalance | 95.43%   | $280.44     | Will Derby County FC win on 2026-02-14?  |
-| 133   | 10:28:02 | 14,253  | 3    | negrisk_rebalance | 95.43%   | $280.44     | Will Derby County FC win on 2026-02-14?  |
-| 132   | 10:27:53 | 14,253  | 3    | negrisk_rebalance | 95.42%   | $280.44     | Will Derby County FC win on 2026-02-14?  |
-| 131   | 10:27:42 | 14,253  | 3    | negrisk_rebalance | 95.42%   | $280.44     | Will Derby County FC win on 2026-02-14?  |
-| 130   | 10:27:33 | 14,253  | 3    | negrisk_rebalance | 92.92%   | $280.32     | Will Derby County FC win on 2026-02-14?  |
-| 129   | 10:27:24 | 14,253  | 3    | negrisk_rebalance | 92.91%   | $280.32     | Will Derby County FC win on 2026-02-14?  |
-| 128   | 10:27:15 | 14,253  | 3    | negrisk_rebalance | 92.97%   | $280.32     | Will Derby County FC win on 2026-02-14?  |
-| 127   | 10:27:07 | 14,253  | 3    | negrisk_rebalance | 92.97%   | $280.32     | Will Derby County FC win on 2026-02-14?  |
-| 126   | 10:26:38 | 14,247  | 1    | negrisk_rebalance | 25.88%   | $23.97      | Will Charlton Athletic FC win on 2026... |
-| 125   | 10:26:27 | 14,247  | 1    | negrisk_rebalance | 25.98%   | $24.06      | Will Charlton Athletic FC win on 2026... |
-| 124   | 10:26:16 | 14,247  | 2    | negrisk_rebalance | 25.98%   | $24.06      | Will Charlton Athletic FC win on 2026... |
-| 123   | 10:26:07 | 14,247  | 1    | negrisk_rebalance | 25.98%   | $24.06      | Will Charlton Athletic FC win on 2026... |
-| 122   | 10:25:58 | 14,247  | 1    | negrisk_rebalance | 25.98%   | $24.06      | Will Charlton Athletic FC win on 2026... |
-| 121   | 10:25:49 | 14,247  | 1    | negrisk_rebalance | 25.98%   | $24.06      | Will Charlton Athletic FC win on 2026... |
-| 119   | 10:25:31 | 14,247  | 2    | negrisk_rebalance | 25.98%   | $24.06      | Will Charlton Athletic FC win on 2026... |
+| 446   | 11:25:10 | 14,223  | 2    | negrisk_rebalance | 68.40%   | $3.99       | Will Galatasaray SK win on 2026-02-17?   |
+| 445   | 11:25:00 | 14,223  | 2    | negrisk_rebalance | 68.38%   | $3.99       | Will Galatasaray SK win on 2026-02-17?   |
+| 444   | 11:24:51 | 14,223  | 3    | negrisk_rebalance | 68.38%   | $3.99       | Will Galatasaray SK win on 2026-02-17?   |
+| 442   | 11:24:33 | 14,223  | 2    | negrisk_rebalance | 68.36%   | $3.99       | Will Galatasaray SK win on 2026-02-17?   |
+| 441   | 11:24:24 | 14,223  | 3    | negrisk_rebalance | 68.36%   | $3.99       | Will Galatasaray SK win on 2026-02-17?   |
+| 440   | 11:24:12 | 14,223  | 3    | negrisk_rebalance | 68.34%   | $3.99       | Will Galatasaray SK win on 2026-02-17?   |
+| 438   | 11:23:59 | 14,223  | 3    | negrisk_rebalance | 68.33%   | $3.99       | Will Galatasaray SK win on 2026-02-17?   |
+| 437   | 11:23:43 | 14,223  | 2    | negrisk_rebalance | 68.30%   | $3.99       | Will Galatasaray SK win on 2026-02-17?   |
+| 436   | 11:23:34 | 14,223  | 2    | negrisk_rebalance | 68.30%   | $3.99       | Will Galatasaray SK win on 2026-02-17?   |
+| 435   | 11:23:13 | 14,210  | 1    | negrisk_rebalance | 3.31%    | $0.30       | Will SpaceX's market cap be less than... |
+| 434   | 11:23:04 | 14,210  | 0    | --                | --       | --          | --                                       |
+| 433   | 11:22:55 | 14,210  | 0    | --                | --       | --          | --                                       |
+| 432   | 11:22:45 | 14,210  | 1    | negrisk_rebalance | 3.30%    | $0.29       | Will SpaceX's market cap be less than... |
+| 430   | 11:22:27 | 14,210  | 0    | --                | --       | --          | --                                       |
+| 429   | 11:22:18 | 14,210  | 1    | negrisk_rebalance | 3.28%    | $0.29       | Will SpaceX's market cap be less than... |
+| 428   | 11:22:06 | 14,210  | 0    | --                | --       | --          | --                                       |
+| 426   | 11:21:52 | 14,210  | 0    | --                | --       | --          | --                                       |
+| 425   | 11:21:36 | 14,210  | 0    | --                | --       | --          | --                                       |
+| 424   | 11:21:26 | 14,210  | 1    | negrisk_rebalance | 3.19%    | $0.29       | Will SpaceX's market cap be less than... |
+| 423   | 11:21:06 | 14,214  | 1    | negrisk_rebalance | 6.34%    | $1.59       | Will the price of XRP be less than $1... |
 

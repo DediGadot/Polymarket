@@ -27,11 +27,13 @@ class GasOracle:
         cache_sec: float = 10.0,
         default_gas_gwei: float = 30.0,
         default_matic_usd: float = 0.50,
+        allow_network: bool = False,
     ):
         self._rpc_url = rpc_url
         self._cache_sec = cache_sec
         self._default_gas_gwei = default_gas_gwei
         self._default_matic_usd = default_matic_usd
+        self._allow_network = allow_network
 
         self._cached_gas_gwei: float | None = None
         self._gas_ts: float = 0.0
@@ -43,6 +45,8 @@ class GasOracle:
         now = time.time()
         if self._cached_gas_gwei is not None and (now - self._gas_ts) < self._cache_sec:
             return self._cached_gas_gwei
+        if not self._allow_network:
+            return self._default_gas_gwei
 
         try:
             resp = httpx.post(
@@ -67,6 +71,8 @@ class GasOracle:
         now = time.time()
         if self._cached_matic_usd is not None and (now - self._matic_ts) < self._cache_sec:
             return self._cached_matic_usd
+        if not self._allow_network:
+            return self._default_matic_usd
 
         try:
             resp = httpx.get(

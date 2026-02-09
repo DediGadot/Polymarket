@@ -102,6 +102,29 @@ def _mode_label(args: argparse.Namespace, cfg: Config) -> str:
     return "LIVE TRADING"
 
 
+def _enforce_polymarket_only_mode(cfg: Config) -> None:
+    """
+    Disable strategies/integrations that require non-Polymarket APIs unless
+    explicitly opted in via config.
+    """
+    if cfg.allow_non_polymarket_apis:
+        return
+
+    if cfg.latency_enabled:
+        logger.warning(
+            "LATENCY_ENABLED=true ignored because ALLOW_NON_POLYMARKET_APIS=false "
+            "(Binance spot feed is external)."
+        )
+        cfg.latency_enabled = False
+
+    if cfg.cross_platform_enabled:
+        logger.warning(
+            "CROSS_PLATFORM_ENABLED=true ignored because ALLOW_NON_POLYMARKET_APIS=false "
+            "(Kalshi API is external)."
+        )
+        cfg.cross_platform_enabled = False
+
+
 def _print_startup(args: argparse.Namespace, cfg: Config) -> None:
     """Print the startup banner and full configuration summary."""
     mode = _mode_label(args, cfg)
@@ -118,6 +141,7 @@ def _print_startup(args: argparse.Namespace, cfg: Config) -> None:
         logger.info("%-20s %d markets", "Scan limit:", args.limit)
     logger.info("%-20s %s", "Order type:", "FAK (Fill-and-Kill)" if cfg.use_fak_orders else "GTC")
     logger.info("%-20s %s", "WebSocket:", "enabled" if cfg.ws_enabled else "disabled")
+    logger.info("%-20s %s", "External APIs:", "enabled" if cfg.allow_non_polymarket_apis else "disabled (Polymarket-only)")
     logger.info("%-20s %s", "Cross-platform:", "enabled" if cfg.cross_platform_enabled else "disabled")
     logger.info("%-20s %s", "CLOB endpoint:", cfg.clob_host)
     logger.info("%-20s %s", "Gamma endpoint:", cfg.gamma_host)
@@ -211,6 +235,8 @@ def main() -> None:
     if args.dry_run:
         args.scan_only = True  # dry-run implies scan-only
 
+    _enforce_polymarket_only_mode(cfg)
+
     # Validate credentials for non-dry-run modes
     if not args.dry_run and (not cfg.private_key or not cfg.polymarket_profile_address):
         logger.error("PRIVATE_KEY and POLYMARKET_PROFILE_ADDRESS required for paper/live trading.")
@@ -246,6 +272,7 @@ def main() -> None:
         rpc_url=cfg.polygon_rpc_url,
         cache_sec=cfg.gas_cache_sec,
         default_gas_gwei=cfg.gas_price_gwei,
+        allow_network=cfg.allow_non_polymarket_apis,
     )
     fee_model = MarketFeeModel(enabled=cfg.fee_model_enabled)
     latency_scanner = LatencyScanner(
