@@ -5,7 +5,7 @@ Unit tests for scanner/cross_platform.py -- cross-platform arbitrage scanner.
 import pytest
 
 from scanner.cross_platform import scan_cross_platform, _check_cross_platform_arb
-from scanner.matching import MatchedEvent
+from scanner.matching import MatchedEvent, PlatformMatch
 from scanner.models import (
     Market,
     OrderBook,
@@ -47,11 +47,16 @@ def _make_matched_event(
         pm_market = _make_pm_market()
     return MatchedEvent(
         pm_event_id=pm_market.event_id,
-        kalshi_event_ticker="K-EVT",
         pm_markets=(pm_market,),
-        kalshi_tickers=(kalshi_ticker,),
-        confidence=confidence,
-        match_method=match_method,
+        platform_matches=(
+            PlatformMatch(
+                platform="kalshi",
+                event_ticker="K-EVT",
+                tickers=(kalshi_ticker,),
+                confidence=confidence,
+                match_method=match_method,
+            ),
+        ),
     )
 
 
@@ -68,9 +73,10 @@ class TestCheckCrossPlatformArb:
             pm_book=pm_no_book,
             pm_side=Side.BUY,
             pm_token_id="pm_no",
-            kalshi_book=kalshi_book,
-            kalshi_side=Side.BUY,
-            kalshi_ticker="K-TEST",
+            ext_book=kalshi_book,
+            ext_side=Side.BUY,
+            ext_ticker="K-TEST",
+            platform="kalshi",
             min_profit_usd=0.01,
             min_roi_pct=0.1,
             gas_per_order=150000,
@@ -94,9 +100,10 @@ class TestCheckCrossPlatformArb:
             pm_book=pm_no_book,
             pm_side=Side.BUY,
             pm_token_id="pm_no",
-            kalshi_book=kalshi_book,
-            kalshi_side=Side.BUY,
-            kalshi_ticker="K-TEST",
+            ext_book=kalshi_book,
+            ext_side=Side.BUY,
+            ext_ticker="K-TEST",
+            platform="kalshi",
             min_profit_usd=0.01,
             min_roi_pct=0.1,
             gas_per_order=150000,
@@ -117,9 +124,10 @@ class TestCheckCrossPlatformArb:
             pm_book=pm_yes_book,
             pm_side=Side.BUY,
             pm_token_id="pm_yes",
-            kalshi_book=kalshi_book,
-            kalshi_side=Side.SELL,
-            kalshi_ticker="K-TEST",
+            ext_book=kalshi_book,
+            ext_side=Side.SELL,
+            ext_ticker="K-TEST",
+            platform="kalshi",
             min_profit_usd=0.01,
             min_roi_pct=0.1,
             gas_per_order=150000,
@@ -139,9 +147,10 @@ class TestCheckCrossPlatformArb:
             pm_book=pm_book,
             pm_side=Side.BUY,
             pm_token_id="pm_yes",
-            kalshi_book=kalshi_book,
-            kalshi_side=Side.BUY,
-            kalshi_ticker="K-TEST",
+            ext_book=kalshi_book,
+            ext_side=Side.BUY,
+            ext_ticker="K-TEST",
+            platform="kalshi",
             min_profit_usd=0.01,
             min_roi_pct=0.1,
             gas_per_order=150000,
@@ -160,9 +169,10 @@ class TestCheckCrossPlatformArb:
             pm_book=pm_no_book,
             pm_side=Side.BUY,
             pm_token_id="pm_no",
-            kalshi_book=kalshi_book,
-            kalshi_side=Side.BUY,
-            kalshi_ticker="K-TEST",
+            ext_book=kalshi_book,
+            ext_side=Side.BUY,
+            ext_ticker="K-TEST",
+            platform="kalshi",
             min_profit_usd=0.01,
             min_roi_pct=0.1,
             gas_per_order=150000,
@@ -183,12 +193,10 @@ class TestScanCrossPlatform:
             "pm_yes": _make_book("pm_yes", 0.54, 200, 0.55, 200),
             "pm_no": _make_book("pm_no", 0.34, 200, 0.35, 200),
         }
-        kalshi_books = {
-            "K-TEST": _make_book("K-TEST", 0.54, 200, 0.55, 200),
-        }
+        kalshi_books = {"K-TEST": _make_book("K-TEST", 0.54, 200, 0.55, 200)}
 
         opps = scan_cross_platform(
-            [match], pm_books, kalshi_books,
+            [match], pm_books, {"kalshi": kalshi_books},
             min_profit_usd=0.01, min_roi_pct=0.1,
             gas_per_order=150000,
         )
@@ -205,12 +213,10 @@ class TestScanCrossPlatform:
             "pm_yes": _make_book("pm_yes", 0.34, 200, 0.35, 200),
             "pm_no": _make_book("pm_no", 0.34, 200, 0.35, 200),
         }
-        kalshi_books = {
-            "K-TEST": _make_book("K-TEST", 0.34, 200, 0.35, 200),
-        }
+        kalshi_books = {"K-TEST": _make_book("K-TEST", 0.34, 200, 0.35, 200)}
 
         opps = scan_cross_platform(
-            [match], pm_books, kalshi_books,
+            [match], pm_books, {"kalshi": kalshi_books},
             min_profit_usd=0.01, min_roi_pct=0.1,
             gas_per_order=150000,
             min_confidence=0.90,
@@ -228,12 +234,10 @@ class TestScanCrossPlatform:
             "pm_yes": _make_book("pm_yes", 0.59, 200, 0.60, 200),
             "pm_no": _make_book("pm_no", 0.39, 200, 0.40, 200),
         }
-        kalshi_books = {
-            "K-TEST": _make_book("K-TEST", 0.59, 200, 0.60, 200),
-        }
+        kalshi_books = {"K-TEST": _make_book("K-TEST", 0.59, 200, 0.60, 200)}
 
         opps = scan_cross_platform(
-            [match], pm_books, kalshi_books,
+            [match], pm_books, {"kalshi": kalshi_books},
             min_profit_usd=0.50, min_roi_pct=2.0,
             gas_per_order=150000,
         )
@@ -244,15 +248,18 @@ class TestScanCrossPlatform:
         m1 = _make_pm_market(yes_id="y1", no_id="n1", eid="e1")
         m2 = _make_pm_market(yes_id="y2", no_id="n2", eid="e2")
         match1 = _make_matched_event(pm_market=m1, kalshi_ticker="K1")
-        match2 = _make_matched_event(pm_market=m2, kalshi_ticker="K2")
-        # Override event ids in match2
         match2 = MatchedEvent(
             pm_event_id="e2",
-            kalshi_event_ticker="K-EVT2",
             pm_markets=(m2,),
-            kalshi_tickers=("K2",),
-            confidence=1.0,
-            match_method="manual",
+            platform_matches=(
+                PlatformMatch(
+                    platform="kalshi",
+                    event_ticker="K-EVT2",
+                    tickers=("K2",),
+                    confidence=1.0,
+                    match_method="manual",
+                ),
+            ),
         )
 
         pm_books = {
@@ -267,7 +274,7 @@ class TestScanCrossPlatform:
         }
 
         opps = scan_cross_platform(
-            [match1, match2], pm_books, kalshi_books,
+            [match1, match2], pm_books, {"kalshi": kalshi_books},
             min_profit_usd=0.01, min_roi_pct=0.1,
             gas_per_order=150000,
         )
@@ -286,28 +293,21 @@ class TestScanCrossPlatform:
             "pm_yes": _make_book("pm_yes", 0.94, 200, 0.95, 200),
             "pm_no": _make_book("pm_no", 0.01, 200, 0.02, 200),
         }
-        kalshi_books = {
-            "K-TEST": _make_book("K-TEST", 0.01, 200, 0.02, 200),
-        }
+        kalshi_books = {"K-TEST": _make_book("K-TEST", 0.01, 200, 0.02, 200)}
 
         kalshi_fee = KalshiFeeModel()
 
         opps = scan_cross_platform(
-            [match], pm_books, kalshi_books,
+            [match], pm_books, {"kalshi": kalshi_books},
             min_profit_usd=0.001, min_roi_pct=0.01,
             gas_per_order=150000,
-            kalshi_fee_model=kalshi_fee,
+            platform_fee_models={"kalshi": kalshi_fee},
         )
         # Should be filtered out by fee-rate guard (>20% at $0.02)
         assert len(opps) == 0
 
     def test_cent_rounding_drift_rejected(self):
         """Kalshi price that drifts >0.5 cents on rounding should be rejected."""
-        # A price of 0.506 rounds to 51 cents, but drift is |0.51 - 0.506| = 0.004 < 0.005 (OK)
-        # A price of 0.507 rounds to 51 cents, drift is |0.51 - 0.507| = 0.003 < 0.005 (OK)
-        # This is hard to trigger with normal book levels. The guard protects
-        # against synthetic/VWAP prices that land between cents.
-        # For this test, we verify the check exists by testing a clearly valid arb passes.
         pm_market = _make_pm_market()
         match = _make_matched_event(pm_market=pm_market)
 
@@ -315,12 +315,10 @@ class TestScanCrossPlatform:
             "pm_yes": _make_book("pm_yes", 0.54, 200, 0.55, 200),
             "pm_no": _make_book("pm_no", 0.34, 200, 0.35, 200),
         }
-        kalshi_books = {
-            "K-TEST": _make_book("K-TEST", 0.54, 200, 0.55, 200),
-        }
+        kalshi_books = {"K-TEST": _make_book("K-TEST", 0.54, 200, 0.55, 200)}
 
         opps = scan_cross_platform(
-            [match], pm_books, kalshi_books,
+            [match], pm_books, {"kalshi": kalshi_books},
             min_profit_usd=0.01, min_roi_pct=0.1,
             gas_per_order=150000,
         )

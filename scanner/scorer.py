@@ -29,6 +29,7 @@ class ScoringContext:
     time_to_resolution_hours: float = 720.0  # default 30 days
     is_spike: bool = False
     book_depth_ratio: float = 1.0  # available_depth / requested_size
+    confidence: float = 0.5  # ArbTracker persistence confidence (0.0-1.0)
 
 
 @dataclass(frozen=True)
@@ -41,14 +42,16 @@ class ScoredOpportunity:
     efficiency_score: float
     urgency_score: float
     competition_score: float
+    persistence_score: float = 0.5
 
 
 # Scoring weights
-W_PROFIT = 0.25
-W_FILL = 0.25
-W_EFFICIENCY = 0.20
-W_URGENCY = 0.20
-W_COMPETITION = 0.10
+W_PROFIT = 0.22
+W_FILL = 0.22
+W_EFFICIENCY = 0.17
+W_URGENCY = 0.17
+W_COMPETITION = 0.07
+W_PERSISTENCE = 0.15
 
 
 def score_opportunity(
@@ -65,6 +68,7 @@ def score_opportunity(
     efficiency_score = _score_efficiency(opp, ctx)
     urgency_score = _score_urgency(opp, ctx)
     competition_score = _score_competition(ctx)
+    persistence_score = ctx.confidence
 
     total = (
         W_PROFIT * profit_score
@@ -72,6 +76,7 @@ def score_opportunity(
         + W_EFFICIENCY * efficiency_score
         + W_URGENCY * urgency_score
         + W_COMPETITION * competition_score
+        + W_PERSISTENCE * persistence_score
     )
 
     return ScoredOpportunity(
@@ -82,6 +87,7 @@ def score_opportunity(
         efficiency_score=efficiency_score,
         urgency_score=urgency_score,
         competition_score=competition_score,
+        persistence_score=persistence_score,
     )
 
 

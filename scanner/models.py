@@ -13,6 +13,7 @@ from typing import Callable
 class Platform(Enum):
     POLYMARKET = "polymarket"
     KALSHI = "kalshi"
+    FANATICS = "fanatics"
 
 
 class OpportunityType(Enum):

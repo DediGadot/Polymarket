@@ -54,7 +54,13 @@ class KalshiClient:
     Handles authentication, market discovery, orderbook fetching,
     and order placement. Converts Kalshi's cents-based pricing to
     our dollar-based OrderBook model.
+
+    Satisfies the PlatformClient protocol for cross-platform integration.
     """
+
+    @property
+    def platform_name(self) -> str:
+        return "kalshi"
 
     def __init__(
         self,

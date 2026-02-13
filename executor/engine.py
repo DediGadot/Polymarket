@@ -44,6 +44,7 @@ def execute_opportunity(
     use_fak: bool = True,
     order_timeout_sec: float = 5.0,
     kalshi_client: object | None = None,
+    platform_clients: dict[str, object] | None = None,
 ) -> TradeResult:
     """
     Execute an arbitrage opportunity. Places all leg orders, tracks fills.
@@ -51,8 +52,8 @@ def execute_opportunity(
 
     For paper trading, simulates execution without placing real orders.
     use_fak: Use Fill-and-Kill orders instead of GTC (immediate fill or cancel).
-    order_timeout_sec: Max time to wait for GTC fills before cancelling (only if use_fak=False).
-    kalshi_client: Required for CROSS_PLATFORM_ARB execution (KalshiClient instance).
+    platform_clients: Dict of platform_name -> PlatformClient for cross-platform arbs.
+    kalshi_client: Backward-compat alias; merged into platform_clients if provided.
     """
     start_time = time.time()
     order_type = OrderType.FAK if use_fak else OrderType.GTC
@@ -70,10 +71,14 @@ def execute_opportunity(
         return _execute_negrisk(client, opportunity, size, start_time, order_type, order_timeout_sec)
     elif opportunity.type == OpportunityType.CROSS_PLATFORM_ARB:
         from executor.cross_platform import execute_cross_platform
-        if kalshi_client is None:
-            raise ValueError("kalshi_client required for CROSS_PLATFORM_ARB execution")
+        # Build platform_clients dict, merging backward-compat kalshi_client
+        all_clients = dict(platform_clients) if platform_clients else {}
+        if kalshi_client is not None and "kalshi" not in all_clients:
+            all_clients["kalshi"] = kalshi_client
+        if not all_clients:
+            raise ValueError("platform_clients required for CROSS_PLATFORM_ARB execution")
         return execute_cross_platform(
-            client, kalshi_client, opportunity, size,
+            client, all_clients, opportunity, size,
             paper_trading=False, use_fak=use_fak,
         )
     else:
@@ -186,9 +191,28 @@ def _execute_binary(
         _unwind_partial(client, order_ids, opportunity.legs, fill_sizes, neg_risk=False)
 
     # Compute P&L
-    total_cost = sum(fp * fs for fp, fs in zip(fill_prices, fill_sizes) if fs > 0)
+    buy_notional = sum(
+        fp * fs
+        for leg, fp, fs in zip(opportunity.legs, fill_prices, fill_sizes)
+        if fs > 0 and leg.side == Side.BUY
+    )
+    sell_notional = sum(
+        fp * fs
+        for leg, fp, fs in zip(opportunity.legs, fill_prices, fill_sizes)
+        if fs > 0 and leg.side == Side.SELL
+    )
     expected_payout = min(fill_sizes) if all_filled else 0  # $1 per set at resolution
-    net_pnl = expected_payout - total_cost - opportunity.estimated_gas_cost if all_filled else -total_cost
+    if all_filled:
+        if buy_notional > 0 and sell_notional == 0:
+            net_pnl = expected_payout - buy_notional - opportunity.estimated_gas_cost
+        elif sell_notional > 0 and buy_notional == 0:
+            net_pnl = sell_notional - expected_payout - opportunity.estimated_gas_cost
+        else:
+            # Defensive fallback for mixed-side opportunities.
+            net_pnl = sell_notional - buy_notional - opportunity.estimated_gas_cost
+    else:
+        # Partial fills were unwound; track conservative loss from executed notional.
+        net_pnl = -(buy_notional + sell_notional)
 
     logger.info(
         "Binary execution: filled=%s orders=%s elapsed=%.0fms pnl=$%.2f",
@@ -287,9 +311,28 @@ def _execute_negrisk(
                        sum(1 for s in fill_sizes if s > 0), len(legs))
         _unwind_partial(client, order_ids, legs, fill_sizes, neg_risk=True)
 
-    total_cost = sum(fp * fs for fp, fs in zip(fill_prices, fill_sizes) if fs > 0)
+    buy_notional = sum(
+        fp * fs
+        for leg, fp, fs in zip(legs, fill_prices, fill_sizes)
+        if fs > 0 and leg.side == Side.BUY
+    )
+    sell_notional = sum(
+        fp * fs
+        for leg, fp, fs in zip(legs, fill_prices, fill_sizes)
+        if fs > 0 and leg.side == Side.SELL
+    )
     expected_payout = size if all_filled else 0  # $1 per set at resolution
-    net_pnl = expected_payout - total_cost - opportunity.estimated_gas_cost if all_filled else -total_cost
+    if all_filled:
+        if buy_notional > 0 and sell_notional == 0:
+            net_pnl = expected_payout - buy_notional - opportunity.estimated_gas_cost
+        elif sell_notional > 0 and buy_notional == 0:
+            net_pnl = sell_notional - expected_payout - opportunity.estimated_gas_cost
+        else:
+            # Defensive fallback for mixed-side opportunities.
+            net_pnl = sell_notional - buy_notional - opportunity.estimated_gas_cost
+    else:
+        # Partial fills were unwound; track conservative loss from executed notional.
+        net_pnl = -(buy_notional + sell_notional)
 
     logger.info(
         "NegRisk execution: %d legs filled=%s elapsed=%.0fms pnl=$%.2f",
@@ -401,11 +444,17 @@ def _unwind_partial(
             # Market-sell the filled position
             opposite_side = Side.SELL if leg.side == Side.BUY else Side.BUY
             try:
+                # SDK semantics: BUY market orders use dollar notional, SELL uses share count.
+                unwind_amount = (
+                    max(0.01, filled * leg.price)
+                    if opposite_side == Side.BUY
+                    else filled
+                )
                 unwind_order = create_market_order(
                     client,
                     token_id=leg.token_id,
                     side=opposite_side,
-                    amount=filled,
+                    amount=unwind_amount,
                     neg_risk=neg_risk,
                 )
                 resp = post_order(client, unwind_order, OrderType.FOK)

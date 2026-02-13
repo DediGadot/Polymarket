@@ -1,5 +1,5 @@
 """
-Cross-platform event matching. Maps events between Polymarket and Kalshi.
+Cross-platform event matching. Maps events between Polymarket and external platforms.
 
 Three matching strategies (in priority order):
 1. Manual JSON map (confidence = 1.0)
@@ -8,6 +8,10 @@ Three matching strategies (in priority order):
 
 Settlement mismatch is the #1 risk in cross-platform arb, so we require
 high confidence (configurable, default 90%) before allowing execution.
+
+Generalized for N platforms: each MatchedEvent contains PlatformMatch entries
+for every external platform that matches a PM event. Backward-compat properties
+preserved for existing Kalshi-specific code paths.
 """
 
 from __future__ import annotations
@@ -21,7 +25,6 @@ from pathlib import Path
 from rapidfuzz import fuzz
 
 from scanner.models import Event, Market
-from client.kalshi import KalshiMarket
 
 logger = logging.getLogger(__name__)
 
@@ -52,41 +55,81 @@ _SETTLEMENT_KEYWORDS = frozenset({
 
 
 @dataclass(frozen=True)
-class MatchedEvent:
-    """A matched event across Polymarket and Kalshi."""
-    pm_event_id: str
-    kalshi_event_ticker: str
-    pm_markets: tuple[Market, ...]
-    kalshi_tickers: tuple[str, ...]
+class PlatformMatch:
+    """A single platform's match to a PM event."""
+    platform: str  # "kalshi", "fanatics", etc.
+    event_ticker: str
+    tickers: tuple[str, ...]
     confidence: float  # 0.0 - 1.0
     match_method: str  # "manual", "verified", or "fuzzy"
 
 
-def _year_mismatch(pm_title: str, kalshi_title: str) -> bool:
+@dataclass(frozen=True)
+class MatchedEvent:
+    """A matched event across Polymarket and one or more external platforms."""
+    pm_event_id: str
+    pm_markets: tuple[Market, ...]
+    platform_matches: tuple[PlatformMatch, ...]
+
+    # Backward-compat: first platform match (Kalshi) accessors
+    @property
+    def kalshi_event_ticker(self) -> str:
+        for m in self.platform_matches:
+            if m.platform == "kalshi":
+                return m.event_ticker
+        return self.platform_matches[0].event_ticker if self.platform_matches else ""
+
+    @property
+    def kalshi_tickers(self) -> tuple[str, ...]:
+        for m in self.platform_matches:
+            if m.platform == "kalshi":
+                return m.tickers
+        return self.platform_matches[0].tickers if self.platform_matches else ()
+
+    @property
+    def confidence(self) -> float:
+        """Max confidence across all platform matches."""
+        if not self.platform_matches:
+            return 0.0
+        return max(m.confidence for m in self.platform_matches)
+
+    @property
+    def match_method(self) -> str:
+        """Method of highest-confidence match."""
+        if not self.platform_matches:
+            return ""
+        best = max(self.platform_matches, key=lambda m: m.confidence)
+        return best.match_method
+
+
+def _year_mismatch(pm_title: str, other_title: str) -> bool:
     """Reject matches where the year differs (e.g., 2024 vs 2028)."""
     pm_years = set(_YEAR_PATTERN.findall(pm_title))
-    kalshi_years = set(_YEAR_PATTERN.findall(kalshi_title))
-    if pm_years and kalshi_years and pm_years != kalshi_years:
+    other_years = set(_YEAR_PATTERN.findall(other_title))
+    if pm_years and other_years and pm_years != other_years:
         return True
     return False
 
 
-def _settlement_mismatch_risk(pm_title: str, kalshi_title: str) -> bool:
+def _settlement_mismatch_risk(pm_title: str, other_title: str) -> bool:
     """Check if titles differ on settlement-relevant keywords."""
     pm_lower = pm_title.lower()
-    kalshi_lower = kalshi_title.lower()
+    other_lower = other_title.lower()
     for kw in _SETTLEMENT_KEYWORDS:
         pm_has = kw in pm_lower
-        kalshi_has = kw in kalshi_lower
-        if pm_has != kalshi_has:
+        other_has = kw in other_lower
+        if pm_has != other_has:
             return True
     return False
 
 
 class EventMatcher:
     """
-    Matches events between Polymarket and Kalshi using manual mappings,
+    Matches events between Polymarket and external platforms using manual mappings,
     verified fuzzy matches, and new fuzzy text matching.
+
+    Generalized: accepts platform_markets dict keyed by platform name.
+    Each value is a list of market objects with .event_ticker, .ticker, .title attrs.
     """
 
     def __init__(
@@ -100,10 +143,14 @@ class EventMatcher:
         self._verified = self._load_json_map(verified_path)
 
     @staticmethod
-    def _load_json_map(path: str) -> dict[str, str]:
+    def _load_json_map(path: str) -> dict:
         """
         Load a JSON mapping file.
-        Format: {"pm_event_id": "kalshi_event_ticker", ...}
+
+        Backward-compatible format:
+          {"pm_event_id": "kalshi_event_ticker", ...}  (old: string values = Kalshi)
+        Multi-platform format:
+          {"pm_event_id": {"kalshi": "ticker", "fanatics": "ticker"}, ...}
         """
         p = Path(path)
         if not p.exists():
@@ -114,144 +161,193 @@ class EventMatcher:
             raise ValueError(f"Map file must be a JSON object, got {type(raw).__name__}")
         return raw
 
+    def _resolve_manual_map(self, pm_event_id: str, platform: str) -> str | None:
+        """
+        Look up manual mapping for a PM event -> platform event ticker.
+
+        Handles both old format (string value = Kalshi) and new format (dict value).
+        """
+        val = self._manual_map.get(pm_event_id)
+        if val is None:
+            return None
+        if isinstance(val, str):
+            # Old format: string = Kalshi ticker
+            return val if platform == "kalshi" else None
+        if isinstance(val, dict):
+            return val.get(platform)
+        return None
+
+    def _resolve_verified(self, pm_event_id: str, platform: str) -> str | None:
+        """Look up verified mapping. Same format handling as manual map."""
+        val = self._verified.get(pm_event_id)
+        if val is None:
+            return None
+        if isinstance(val, str):
+            return val if platform == "kalshi" else None
+        if isinstance(val, dict):
+            return val.get(platform)
+        return None
+
     def match_events(
         self,
         pm_events: list[Event],
-        kalshi_markets: list[KalshiMarket],
+        platform_markets: dict[str, list],
     ) -> list[MatchedEvent]:
         """
-        Match Polymarket events to Kalshi markets.
+        Match Polymarket events to external platform markets.
+
+        Args:
+            pm_events: List of Polymarket Event objects.
+            platform_markets: Dict of platform_name -> list of market objects.
+                Each market must have .event_ticker, .ticker, .title attributes.
 
         Returns list of MatchedEvent sorted by confidence descending.
         Only manual and verified matches are tradeable (confidence > 0).
         """
-        # Build Kalshi event index: event_ticker -> list of market tickers
-        kalshi_by_event: dict[str, list[KalshiMarket]] = {}
-        for km in kalshi_markets:
-            kalshi_by_event.setdefault(km.event_ticker, []).append(km)
-
-        # Build Kalshi title index for fuzzy matching
-        kalshi_titles: dict[str, str] = {}
-        for event_ticker, kms in kalshi_by_event.items():
-            kalshi_titles[event_ticker] = kms[0].title
-
         matches: list[MatchedEvent] = []
 
+        # Build per-platform indexes
+        platform_indexes: dict[str, tuple[dict[str, list], dict[str, str]]] = {}
+        for platform_name, markets in platform_markets.items():
+            by_event: dict[str, list] = {}
+            for m in markets:
+                by_event.setdefault(m.event_ticker, []).append(m)
+            titles: dict[str, str] = {}
+            for et, mks in by_event.items():
+                titles[et] = mks[0].title
+            platform_indexes[platform_name] = (by_event, titles)
+
         for pm_event in pm_events:
-            # Strategy 1: Manual mapping (highest confidence)
-            kalshi_ticker = self._manual_map.get(pm_event.event_id)
-            if kalshi_ticker and kalshi_ticker in kalshi_by_event:
-                kms = kalshi_by_event[kalshi_ticker]
-                match = MatchedEvent(
-                    pm_event_id=pm_event.event_id,
-                    kalshi_event_ticker=kalshi_ticker,
-                    pm_markets=pm_event.markets,
-                    kalshi_tickers=tuple(km.ticker for km in kms),
-                    confidence=1.0,
-                    match_method="manual",
+            platform_match_list: list[PlatformMatch] = []
+
+            for platform_name, (by_event, titles) in platform_indexes.items():
+                pm_match = self._match_single_platform(
+                    pm_event, platform_name, by_event, titles,
                 )
-                matches.append(match)
-                logger.info(
-                    "Manual match: PM %s -> Kalshi %s (%d markets)",
-                    pm_event.event_id, kalshi_ticker, len(kms),
-                )
-                continue
+                if pm_match is not None:
+                    platform_match_list.append(pm_match)
 
-            # Strategy 2: Verified mapping (pinned event ticker, score only for confidence)
-            verified_ticker = self._verified.get(pm_event.event_id)
-            if verified_ticker:
-                kms = kalshi_by_event.get(verified_ticker)
-                if not kms:
-                    logger.warning(
-                        "Verified mapping missing on Kalshi: PM %s -> %s",
-                        pm_event.event_id, verified_ticker,
-                    )
-                    continue
-
-                kalshi_title = kms[0].title
-                if _year_mismatch(pm_event.title, kalshi_title):
-                    logger.info(
-                        "Verified match REJECTED (year mismatch): PM '%s' vs Kalshi '%s'",
-                        pm_event.title[:50], kalshi_title[:50],
-                    )
-                    continue
-
-                if _settlement_mismatch_risk(pm_event.title, kalshi_title):
-                    logger.info(
-                        "Verified match REJECTED (settlement keyword): PM '%s' vs Kalshi '%s'",
-                        pm_event.title[:50], kalshi_title[:50],
-                    )
-                    continue
-
-                best_score = fuzz.token_set_ratio(pm_event.title, kalshi_title)
-                if best_score < self._fuzzy_threshold:
-                    logger.info(
-                        "Verified match below threshold: PM '%s' -> Kalshi '%s' (score=%.1f%% < %.1f%%)",
-                        pm_event.title[:50], kalshi_title[:50], best_score, self._fuzzy_threshold,
-                    )
-                    continue
-
+            if platform_match_list:
                 matches.append(MatchedEvent(
                     pm_event_id=pm_event.event_id,
-                    kalshi_event_ticker=verified_ticker,
                     pm_markets=pm_event.markets,
-                    kalshi_tickers=tuple(km.ticker for km in kms),
-                    confidence=best_score / 100.0,
-                    match_method="verified",
+                    platform_matches=tuple(platform_match_list),
                 ))
-                logger.info(
-                    "Verified match: PM '%s' -> Kalshi '%s' (score=%.1f%%)",
-                    pm_event.title[:50], kalshi_title[:50], best_score,
-                )
-                continue
 
-            # Strategy 2+3: Fuzzy text matching
-            best_score = 0.0
-            best_kalshi_ticker = ""
-            for kt, kalshi_title in kalshi_titles.items():
-                score = fuzz.token_set_ratio(pm_event.title, kalshi_title)
-                if score > best_score:
-                    best_score = score
-                    best_kalshi_ticker = kt
-
-            if best_score < self._fuzzy_threshold or not best_kalshi_ticker:
-                continue
-
-            kalshi_title = kalshi_titles[best_kalshi_ticker]
-
-            # Safety checks: reject matches with year or settlement mismatches
-            if _year_mismatch(pm_event.title, kalshi_title):
-                logger.info(
-                    "Fuzzy match REJECTED (year mismatch): PM '%s' vs Kalshi '%s'",
-                    pm_event.title[:50], kalshi_title[:50],
-                )
-                continue
-
-            if _settlement_mismatch_risk(pm_event.title, kalshi_title):
-                logger.info(
-                    "Fuzzy match REJECTED (settlement keyword): PM '%s' vs Kalshi '%s'",
-                    pm_event.title[:50], kalshi_title[:50],
-                )
-                continue
-
-            kms = kalshi_by_event[best_kalshi_ticker]
-
-            # Strategy 3: New unverified fuzzy match — log but block trading
-            logger.warning(
-                "UNVERIFIED fuzzy match: PM '%s' -> Kalshi '%s' (score=%.1f%%). "
-                "Add to verified_matches.json to enable trading.",
-                pm_event.title[:50], kalshi_title[:50], best_score,
-            )
-            match = MatchedEvent(
-                pm_event_id=pm_event.event_id,
-                kalshi_event_ticker=best_kalshi_ticker,
-                pm_markets=pm_event.markets,
-                kalshi_tickers=tuple(km.ticker for km in kms),
-                confidence=0.0,  # Blocked from execution by confidence filter
-                match_method="fuzzy",
-            )
-            matches.append(match)
-
-        # Sort by confidence descending
+        # Sort by max confidence descending
         matches.sort(key=lambda m: m.confidence, reverse=True)
         return matches
+
+    def _match_single_platform(
+        self,
+        pm_event: Event,
+        platform: str,
+        by_event: dict[str, list],
+        titles: dict[str, str],
+    ) -> PlatformMatch | None:
+        """Try to match a PM event to one external platform. Returns PlatformMatch or None."""
+
+        # Strategy 1: Manual mapping (highest confidence)
+        manual_ticker = self._resolve_manual_map(pm_event.event_id, platform)
+        if manual_ticker and manual_ticker in by_event:
+            mks = by_event[manual_ticker]
+            logger.info(
+                "Manual match: PM %s -> %s %s (%d markets)",
+                pm_event.event_id, platform, manual_ticker, len(mks),
+            )
+            return PlatformMatch(
+                platform=platform,
+                event_ticker=manual_ticker,
+                tickers=tuple(m.ticker for m in mks),
+                confidence=1.0,
+                match_method="manual",
+            )
+
+        # Strategy 2: Verified mapping
+        verified_ticker = self._resolve_verified(pm_event.event_id, platform)
+        if verified_ticker:
+            mks = by_event.get(verified_ticker)
+            if not mks:
+                logger.warning(
+                    "Verified mapping missing on %s: PM %s -> %s",
+                    platform, pm_event.event_id, verified_ticker,
+                )
+                return None
+
+            ext_title = mks[0].title
+            if _year_mismatch(pm_event.title, ext_title):
+                logger.info(
+                    "Verified match REJECTED (year mismatch): PM '%s' vs %s '%s'",
+                    pm_event.title[:50], platform, ext_title[:50],
+                )
+                return None
+
+            if _settlement_mismatch_risk(pm_event.title, ext_title):
+                logger.info(
+                    "Verified match REJECTED (settlement keyword): PM '%s' vs %s '%s'",
+                    pm_event.title[:50], platform, ext_title[:50],
+                )
+                return None
+
+            best_score = fuzz.token_set_ratio(pm_event.title, ext_title)
+            if best_score < self._fuzzy_threshold:
+                logger.info(
+                    "Verified match below threshold: PM '%s' -> %s '%s' (score=%.1f%% < %.1f%%)",
+                    pm_event.title[:50], platform, ext_title[:50], best_score, self._fuzzy_threshold,
+                )
+                return None
+
+            logger.info(
+                "Verified match: PM '%s' -> %s '%s' (score=%.1f%%)",
+                pm_event.title[:50], platform, ext_title[:50], best_score,
+            )
+            return PlatformMatch(
+                platform=platform,
+                event_ticker=verified_ticker,
+                tickers=tuple(m.ticker for m in mks),
+                confidence=best_score / 100.0,
+                match_method="verified",
+            )
+
+        # Strategy 3: Fuzzy text matching
+        best_score = 0.0
+        best_ticker = ""
+        for et, ext_title in titles.items():
+            score = fuzz.token_set_ratio(pm_event.title, ext_title)
+            if score > best_score:
+                best_score = score
+                best_ticker = et
+
+        if best_score < self._fuzzy_threshold or not best_ticker:
+            return None
+
+        ext_title = titles[best_ticker]
+
+        if _year_mismatch(pm_event.title, ext_title):
+            logger.info(
+                "Fuzzy match REJECTED (year mismatch): PM '%s' vs %s '%s'",
+                pm_event.title[:50], platform, ext_title[:50],
+            )
+            return None
+
+        if _settlement_mismatch_risk(pm_event.title, ext_title):
+            logger.info(
+                "Fuzzy match REJECTED (settlement keyword): PM '%s' vs %s '%s'",
+                pm_event.title[:50], platform, ext_title[:50],
+            )
+            return None
+
+        mks = by_event[best_ticker]
+
+        logger.warning(
+            "UNVERIFIED fuzzy match: PM '%s' -> %s '%s' (score=%.1f%%). "
+            "Add to verified_matches.json to enable trading.",
+            pm_event.title[:50], platform, ext_title[:50], best_score,
+        )
+        return PlatformMatch(
+            platform=platform,
+            event_ticker=best_ticker,
+            tickers=tuple(m.ticker for m in mks),
+            confidence=0.0,  # Blocked from execution by confidence filter
+            match_method="fuzzy",
+        )

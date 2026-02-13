@@ -27,6 +27,14 @@ KALSHI_FEE_FACTOR = 0.07  # 7% base rate
 class KalshiFeeModel:
     """Kalshi taker fee model: ceil(0.07 * C * P * (1-P)) per contract."""
 
+    @property
+    def platform_name(self) -> str:
+        return "kalshi"
+
+    @property
+    def has_resolution_fee(self) -> bool:
+        return False
+
     def taker_fee_per_contract(self, price: float) -> float:
         """
         Compute taker fee per contract in dollars.

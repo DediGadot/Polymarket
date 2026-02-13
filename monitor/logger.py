@@ -1,6 +1,7 @@
 """
-Structured logging with dual output:
+Structured logging with triple output:
   - stderr: human-readable, ANSI-colored, column-aligned console output
+  - file (always): verbose debug log at logs/run_YYYYMMDD_HHMMSS.log
   - file (optional): machine-readable single-line JSON (ndjson)
 """
 
@@ -11,6 +12,7 @@ import logging
 import os
 import sys
 import time
+from datetime import datetime, timezone
 
 
 # ANSI color codes
@@ -74,23 +76,43 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(entry, separators=(",", ":"))
 
 
-def setup_logging(level: str = "INFO", json_log_file: str | None = None) -> None:
+def setup_logging(level: str = "INFO", json_log_file: str | None = None) -> str:
     """
     Configure root logger.
       - Always: human-readable ConsoleFormatter on stderr
+      - Always: verbose debug log file at logs/run_YYYYMMDD_HHMMSS.log
       - Optionally: JSON file handler for machine logs
+
+    Returns the path to the verbose log file.
     """
     root = logging.getLogger()
-    root.setLevel(getattr(logging, level.upper(), logging.INFO))
+    # Root must be DEBUG so the file handler captures everything
+    root.setLevel(logging.DEBUG)
 
     # Clear existing handlers
     for handler in root.handlers[:]:
         root.removeHandler(handler)
 
-    # Console handler (human-readable)
+    # Console handler (human-readable, respects configured level)
     console = logging.StreamHandler(sys.stderr)
+    console.setLevel(getattr(logging, level.upper(), logging.INFO))
     console.setFormatter(ConsoleFormatter())
     root.addHandler(console)
+
+    # Always: verbose debug log file
+    log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    log_path = os.path.join(log_dir, f"run_{timestamp}.log")
+
+    verbose_fmt = logging.Formatter(
+        fmt="%(asctime)s.%(msecs)03d %(levelname)-8s %(module)s:%(lineno)d - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    verbose_handler = logging.FileHandler(log_path, mode="a")
+    verbose_handler.setLevel(logging.DEBUG)
+    verbose_handler.setFormatter(verbose_fmt)
+    root.addHandler(verbose_handler)
 
     # Optional JSON file handler
     if json_log_file:
@@ -102,6 +124,8 @@ def setup_logging(level: str = "INFO", json_log_file: str | None = None) -> None
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("py_clob_client").setLevel(logging.WARNING)
+
+    return log_path
 
 
 def _supports_color() -> bool:

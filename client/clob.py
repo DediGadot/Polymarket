@@ -4,6 +4,9 @@ CLOB REST client wrapper. Thin layer converting SDK types to our domain models.
 
 from __future__ import annotations
 
+import logging
+import time
+
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import (
     OrderArgs,
@@ -15,6 +18,20 @@ from py_clob_client.clob_types import (
 from py_clob_client.order_builder.constants import BUY, SELL
 
 from scanner.models import OrderBook, PriceLevel, Side
+
+logger = logging.getLogger(__name__)
+
+# Retry config for flaky CLOB API (HTTP/2 connection resets, SSL errors)
+_MAX_RETRIES = 3
+_RETRY_BACKOFF_SEC = 1.0
+
+# Patch py_clob_client's shared httpx client:
+#   - Disable HTTP/2: the CLOB server sends GOAWAY frames that crash the shared
+#     connection pool (httpcore.RemoteProtocolError: ConnectionTerminated)
+#   - Add a 15s timeout (SDK default has none or too low for batch book requests)
+import httpx as _httpx
+from py_clob_client.http_helpers import helpers as _clob_helpers
+_clob_helpers._http_client = _httpx.Client(http2=False, timeout=15.0)
 
 
 def _sort_book_levels(
@@ -38,9 +55,28 @@ def _sort_book_levels(
     return bids, asks
 
 
+def _retry_api_call(fn, *args, max_retries: int = _MAX_RETRIES, **kwargs):
+    """Retry a py_clob_client call with exponential backoff on connection errors."""
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            last_exc = exc
+            err_str = str(exc)
+            # Only retry on connection-level errors (status_code=None), not 4xx/5xx
+            is_connection_error = "Request exception" in err_str or "status_code=None" in err_str
+            if not is_connection_error or attempt == max_retries - 1:
+                raise
+            wait = _RETRY_BACKOFF_SEC * (2 ** attempt)
+            logger.debug("CLOB API retry %d/%d after %.1fs: %s", attempt + 1, max_retries, wait, exc)
+            time.sleep(wait)
+    raise last_exc  # unreachable, but satisfies type checker
+
+
 def get_orderbook(client: ClobClient, token_id: str) -> OrderBook:
     """Fetch full orderbook for a token and convert to our OrderBook model."""
-    raw = client.get_order_book(token_id)
+    raw = _retry_api_call(client.get_order_book, token_id)
     bids, asks = _sort_book_levels(raw.bids, raw.asks)
     return OrderBook(token_id=token_id, bids=bids, asks=asks)
 
@@ -54,7 +90,7 @@ def get_orderbooks(client: ClobClient, token_ids: list[str]) -> dict[str, OrderB
     for i in range(0, len(token_ids), BOOK_BATCH_SIZE):
         chunk = token_ids[i:i + BOOK_BATCH_SIZE]
         params = [BookParams(token_id=tid) for tid in chunk]
-        raws = client.get_order_books(params)
+        raws = _retry_api_call(client.get_order_books, params)
         for raw in raws:
             tid = raw.asset_id
             bids, asks = _sort_book_levels(raw.bids, raw.asks)
@@ -83,7 +119,7 @@ def get_orderbooks_parallel(
 
     def _fetch_chunk(chunk: list[str]) -> dict[str, OrderBook]:
         params = [BookParams(token_id=tid) for tid in chunk]
-        raws = client.get_order_books(params)
+        raws = _retry_api_call(client.get_order_books, params)
         result: dict[str, OrderBook] = {}
         for raw in raws:
             tid = raw.asset_id
@@ -95,7 +131,6 @@ def get_orderbooks_parallel(
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(_fetch_chunk, chunk) for chunk in chunks]
         for future in futures:
-            # .result() propagates exceptions (fail-fast)
             result.update(future.result())
     return result
 

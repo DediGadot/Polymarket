@@ -77,7 +77,7 @@ def scan_negrisk_events(
             nrm_key = event.neg_risk_market_id or event.event_id
             expected_total = event_market_counts.get(nrm_key, 0)
             if expected_total > 0 and len(active_markets) < expected_total:
-                logger.warning(
+                logger.debug(
                     "SKIP incomplete outcome group %s: have %d/%d markets (inactive outcomes exist)",
                     event.title[:50], len(active_markets), expected_total,
                 )
@@ -238,7 +238,7 @@ def _check_buy_all_arb(
     if net_profit < min_profit_usd or roi_pct < min_roi_pct:
         return None
 
-    logger.info(
+    logger.debug(
         "NEGRISK BUY ARB: %s | %d outcomes | cost=%.4f profit/set=%.4f sets=%.1f net=$%.2f roi=%.2f%%",
         event.title[:50], n_legs, total_cost, profit_per_set, max_sets, net_profit, roi_pct,
     )
@@ -361,7 +361,7 @@ def _check_sell_all_arb(
     if net_profit < min_profit_usd or roi_pct < min_roi_pct:
         return None
 
-    logger.info(
+    logger.debug(
         "NEGRISK SELL ARB: %s | %d outcomes | proceeds=%.4f profit/set=%.4f sets=%.1f net=$%.2f roi=%.2f%%",
         event.title[:50], n_legs, total_proceeds, profit_per_set, max_sets, net_profit, roi_pct,
     )

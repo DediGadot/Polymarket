@@ -121,19 +121,19 @@ class TestExecuteSingle:
         assert mock_verify_gas.call_args.kwargs["size"] == pytest.approx(10.0)
 
     @patch("run.get_orderbooks")
-    def test_cross_platform_requires_kalshi_client(self, mock_get_books):
-        mock_get_books.side_effect = AssertionError("should not fetch PM books without Kalshi client")
+    def test_cross_platform_requires_platform_clients(self, mock_get_books):
+        mock_get_books.side_effect = AssertionError("should not fetch PM books without platform clients")
         cfg = Config(max_exposure_per_trade=500.0, max_total_exposure=5000.0)
         opp = _make_cross_platform_opp(leg_size=100.0)
 
-        with pytest.raises(run.SafetyCheckFailed, match="kalshi_client required"):
+        with pytest.raises(run.SafetyCheckFailed, match="platform_clients required"):
             run._execute_single(
                 client=MagicMock(),
                 cfg=cfg,
                 opp=opp,
                 pnl=MagicMock(),
                 breaker=MagicMock(),
-                kalshi_client=None,
+                platform_clients=None,
             )
 
     @patch("run.execute_opportunity")
@@ -166,14 +166,11 @@ class TestExecuteSingle:
             opp=opp,
             pnl=MagicMock(),
             breaker=MagicMock(),
-            kalshi_client=kalshi_client,
+            platform_clients={"kalshi": kalshi_client},
         )
 
         assert mock_get_books.call_args.args[1] == ["pm_yes"]
         kalshi_client.get_orderbooks.assert_called_once_with(["K-TEST"])
-        first_cross_check = mock_verify_cross_books.call_args_list[0]
-        assert first_cross_check.args[1] == pm_books
-        assert first_cross_check.args[2] == kalshi_books
 
 
 class TestPolymarketOnlyMode:

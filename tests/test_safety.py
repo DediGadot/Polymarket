@@ -468,6 +468,53 @@ class TestVerifyEdgeIntact:
         with pytest.raises(SafetyCheckFailed, match="No fresh book"):
             verify_edge_intact(opp, books)
 
+    def test_cross_platform_edge_intact_passes(self):
+        opp = Opportunity(
+            type=OpportunityType.CROSS_PLATFORM_ARB,
+            event_id="e1",
+            legs=(
+                LegOrder("pm_yes", Side.BUY, 0.40, 10, platform="polymarket"),
+                LegOrder("K-TEST", Side.SELL, 0.70, 10, platform="kalshi"),
+            ),
+            expected_profit_per_set=0.30,
+            net_profit_per_set=0.30,
+            max_sets=10,
+            gross_profit=3.0,
+            estimated_gas_cost=0.01,
+            net_profit=2.99,
+            roi_pct=30.0,
+            required_capital=7.0,
+        )
+        books = {
+            "pm_yes": _make_book("pm_yes", 0.39, 100, 0.40, 100),
+            "K-TEST": _make_book("K-TEST", 0.70, 100, 0.71, 100),
+        }
+        verify_edge_intact(opp, books)
+
+    def test_cross_platform_edge_gone_raises(self):
+        opp = Opportunity(
+            type=OpportunityType.CROSS_PLATFORM_ARB,
+            event_id="e1",
+            legs=(
+                LegOrder("pm_yes", Side.BUY, 0.40, 10, platform="polymarket"),
+                LegOrder("K-TEST", Side.SELL, 0.70, 10, platform="kalshi"),
+            ),
+            expected_profit_per_set=0.30,
+            net_profit_per_set=0.30,
+            max_sets=10,
+            gross_profit=3.0,
+            estimated_gas_cost=0.01,
+            net_profit=2.99,
+            roi_pct=30.0,
+            required_capital=7.0,
+        )
+        books = {
+            "pm_yes": _make_book("pm_yes", 0.39, 100, 0.54, 100),
+            "K-TEST": _make_book("K-TEST", 0.52, 100, 0.53, 100),
+        }
+        with pytest.raises(SafetyCheckFailed, match="Edge gone"):
+            verify_edge_intact(opp, books)
+
 
 class TestVerifyInventory:
     def test_buy_only_passes_trivially(self):

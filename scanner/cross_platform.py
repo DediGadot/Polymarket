@@ -1,9 +1,11 @@
 """
 Cross-platform arbitrage scanner.
 
-Detects when the same event is priced differently across Polymarket and Kalshi,
-creating a guaranteed profit: buy YES cheap on one platform, buy NO cheap on the other,
-total cost < $1, guaranteed $1 payout at resolution.
+Detects when the same event is priced differently across Polymarket and external
+platforms, creating a guaranteed profit: buy YES cheap on one platform, buy NO
+cheap on the other, total cost < $1, guaranteed $1 payout at resolution.
+
+Generalized for N platforms: iterates each PlatformMatch within each MatchedEvent.
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ import logging
 from client.gas import GasOracle
 from scanner.depth import effective_price, sweep_depth, worst_fill_price
 from scanner.fees import MarketFeeModel
-from scanner.kalshi_fees import KalshiFeeModel
+from scanner.platform_fees import PlatformFeeModel
 from scanner.matching import MatchedEvent
 from scanner.models import (
     LegOrder,
@@ -29,127 +31,119 @@ logger = logging.getLogger(__name__)
 def scan_cross_platform(
     matched_events: list[MatchedEvent],
     pm_books: dict[str, OrderBook],
-    kalshi_books: dict[str, OrderBook],
+    platform_books: dict[str, dict[str, OrderBook]],
     min_profit_usd: float,
     min_roi_pct: float,
     gas_per_order: int,
     gas_oracle: GasOracle | None = None,
     gas_price_gwei: float = 30.0,
     pm_fee_model: MarketFeeModel | None = None,
-    kalshi_fee_model: KalshiFeeModel | None = None,
+    platform_fee_models: dict[str, PlatformFeeModel] | None = None,
     min_confidence: float = 0.90,
+    # Backward-compat: accept old kalshi-specific params
+    kalshi_books: dict[str, OrderBook] | None = None,
+    kalshi_fee_model: object | None = None,
 ) -> list[Opportunity]:
     """
     Scan matched events for cross-platform arbitrage opportunities.
 
-    For each matched binary event, checks two directions:
-      1. Buy PM YES + Buy Kalshi NO  (if PM_yes_ask + Kalshi_no_ask < $1)
-      2. Buy PM NO  + Buy Kalshi YES (if PM_no_ask + Kalshi_yes_ask < $1)
+    For each matched binary event and each platform match, checks two directions:
+      1. Buy PM YES + Buy EXT NO
+      2. Buy PM NO  + Buy EXT YES
+
+    Args:
+        platform_books: {platform_name: {ticker: OrderBook, ...}, ...}
+        platform_fee_models: {platform_name: PlatformFeeModel, ...}
+        kalshi_books/kalshi_fee_model: Backward-compat; merged into platform args.
 
     Returns list of profitable Opportunity objects sorted by ROI descending.
     """
+    # Backward-compat: merge old kalshi-specific params
+    if platform_books is None:
+        platform_books = {}
+    if kalshi_books is not None and "kalshi" not in platform_books:
+        platform_books["kalshi"] = kalshi_books
+    if platform_fee_models is None:
+        platform_fee_models = {}
+    if kalshi_fee_model is not None and "kalshi" not in platform_fee_models:
+        platform_fee_models["kalshi"] = kalshi_fee_model
+
     opportunities: list[Opportunity] = []
 
     for match in matched_events:
-        if match.confidence < min_confidence:
-            logger.debug(
-                "Skipping match %s -> %s (confidence=%.2f < %.2f)",
-                match.pm_event_id, match.kalshi_event_ticker,
-                match.confidence, min_confidence,
-            )
+        if len(match.pm_markets) == 0:
             continue
 
-        # For cross-platform arb, we need a 1:1 binary mapping
-        # Each PM binary market maps to one Kalshi ticker
-        if len(match.pm_markets) == 0 or len(match.kalshi_tickers) == 0:
-            continue
-
-        # Use first PM binary market and first Kalshi ticker
         pm_market = match.pm_markets[0]
-        kalshi_ticker = match.kalshi_tickers[0]
-
         pm_yes_book = pm_books.get(pm_market.yes_token_id)
         pm_no_book = pm_books.get(pm_market.no_token_id)
-        kalshi_book = kalshi_books.get(kalshi_ticker)
 
-        if not pm_yes_book or not pm_no_book or not kalshi_book:
+        if not pm_yes_book or not pm_no_book:
             continue
 
-        # Direction 1: Buy PM YES + Buy Kalshi NO
-        # Kalshi NO ask price = 1 - kalshi_yes_bid? No -- Kalshi book is already
-        # modeled as YES token. To buy NO on Kalshi, we need kalshi NO ask.
-        # In our OrderBook model for Kalshi, asks are YES asks.
-        # To get Kalshi NO ask: it's (1 - kalshi YES bid price).
-        # Actually, we can think of it as: if we want NO on Kalshi,
-        # we buy it at (1 - best_bid) equivalent. But the orderbook structure
-        # already gives us asks from the NO side.
-        #
-        # Simpler approach: Kalshi's YES ask represents the cost to go YES.
-        # The NO cost = 1 - YES bid price (selling YES is equiv to buying NO).
-        # But for the depth-aware approach, we'd need the actual NO orderbook.
-        #
-        # For binary markets on both platforms:
-        # PM has separate YES and NO books.
-        # Kalshi: our model has YES bids and YES asks.
-        # To buy Kalshi NO: effectively we sell Kalshi YES. So Kalshi NO cost = 1 - kalshi_yes_bid.
-        # But actually, we should just use the Kalshi book directly. The asks represent YES cost.
-        #
-        # Direction 1: PM YES ask + (1 - Kalshi YES bid) < 1
-        #   => PM YES ask < Kalshi YES bid (buy PM YES cheap, sell Kalshi YES high equiv)
-        #   Actually this doesn't work for arb -- we need to BUY on both sides.
-        #
-        # Correct formulation:
-        # Direction 1: Buy PM YES + Buy Kalshi NO
-        #   PM YES cost = pm_yes_ask
-        #   Kalshi NO cost = 1 - kalshi_yes_bid (NO ask = complement of YES bid)
-        #   Total cost < 1 is arb
-        #
-        # Direction 2: Buy PM NO + Buy Kalshi YES
-        #   PM NO cost = pm_no_ask
-        #   Kalshi YES cost = kalshi_yes_ask
-        #   Total cost < 1 is arb
+        for pm in match.platform_matches:
+            if pm.confidence < min_confidence:
+                logger.debug(
+                    "Skipping match %s -> %s %s (confidence=%.2f < %.2f)",
+                    match.pm_event_id, pm.platform, pm.event_ticker,
+                    pm.confidence, min_confidence,
+                )
+                continue
 
-        # Direction 1: Buy PM YES + Buy Kalshi NO (= sell Kalshi YES)
-        opp = _check_cross_platform_arb(
-            event_id=match.pm_event_id,
-            pm_book=pm_yes_book,
-            pm_side=Side.BUY,
-            pm_token_id=pm_market.yes_token_id,
-            kalshi_book=kalshi_book,
-            kalshi_side=Side.SELL,  # Selling YES on Kalshi = buying NO
-            kalshi_ticker=kalshi_ticker,
-            min_profit_usd=min_profit_usd,
-            min_roi_pct=min_roi_pct,
-            gas_per_order=gas_per_order,
-            gas_oracle=gas_oracle,
-            gas_price_gwei=gas_price_gwei,
-            pm_market=pm_market,
-            pm_fee_model=pm_fee_model,
-            kalshi_fee_model=kalshi_fee_model,
-        )
-        if opp:
-            opportunities.append(opp)
+            if not pm.tickers:
+                continue
 
-        # Direction 2: Buy PM NO + Buy Kalshi YES
-        opp = _check_cross_platform_arb(
-            event_id=match.pm_event_id,
-            pm_book=pm_no_book,
-            pm_side=Side.BUY,
-            pm_token_id=pm_market.no_token_id,
-            kalshi_book=kalshi_book,
-            kalshi_side=Side.BUY,  # Buying YES on Kalshi
-            kalshi_ticker=kalshi_ticker,
-            min_profit_usd=min_profit_usd,
-            min_roi_pct=min_roi_pct,
-            gas_per_order=gas_per_order,
-            gas_oracle=gas_oracle,
-            gas_price_gwei=gas_price_gwei,
-            pm_market=pm_market,
-            pm_fee_model=pm_fee_model,
-            kalshi_fee_model=kalshi_fee_model,
-        )
-        if opp:
-            opportunities.append(opp)
+            ext_ticker = pm.tickers[0]
+            ext_books = platform_books.get(pm.platform, {})
+            ext_book = ext_books.get(ext_ticker)
+            ext_fee_model = platform_fee_models.get(pm.platform)
+
+            if not ext_book:
+                continue
+
+            # Direction 1: Buy PM YES + Buy EXT NO (= sell EXT YES)
+            opp = _check_cross_platform_arb(
+                event_id=match.pm_event_id,
+                pm_book=pm_yes_book,
+                pm_side=Side.BUY,
+                pm_token_id=pm_market.yes_token_id,
+                ext_book=ext_book,
+                ext_side=Side.SELL,
+                ext_ticker=ext_ticker,
+                platform=pm.platform,
+                min_profit_usd=min_profit_usd,
+                min_roi_pct=min_roi_pct,
+                gas_per_order=gas_per_order,
+                gas_oracle=gas_oracle,
+                gas_price_gwei=gas_price_gwei,
+                pm_market=pm_market,
+                pm_fee_model=pm_fee_model,
+                ext_fee_model=ext_fee_model,
+            )
+            if opp:
+                opportunities.append(opp)
+
+            # Direction 2: Buy PM NO + Buy EXT YES
+            opp = _check_cross_platform_arb(
+                event_id=match.pm_event_id,
+                pm_book=pm_no_book,
+                pm_side=Side.BUY,
+                pm_token_id=pm_market.no_token_id,
+                ext_book=ext_book,
+                ext_side=Side.BUY,
+                ext_ticker=ext_ticker,
+                platform=pm.platform,
+                min_profit_usd=min_profit_usd,
+                min_roi_pct=min_roi_pct,
+                gas_per_order=gas_per_order,
+                gas_oracle=gas_oracle,
+                gas_price_gwei=gas_price_gwei,
+                pm_market=pm_market,
+                pm_fee_model=pm_fee_model,
+                ext_fee_model=ext_fee_model,
+            )
+            if opp:
+                opportunities.append(opp)
 
     opportunities.sort(key=lambda o: o.roi_pct, reverse=True)
     return opportunities
@@ -160,9 +154,10 @@ def _check_cross_platform_arb(
     pm_book: OrderBook,
     pm_side: Side,
     pm_token_id: str,
-    kalshi_book: OrderBook,
-    kalshi_side: Side,
-    kalshi_ticker: str,
+    ext_book: OrderBook,
+    ext_side: Side,
+    ext_ticker: str,
+    platform: str,
     min_profit_usd: float,
     min_roi_pct: float,
     gas_per_order: int,
@@ -170,13 +165,13 @@ def _check_cross_platform_arb(
     gas_price_gwei: float,
     pm_market: object | None = None,
     pm_fee_model: MarketFeeModel | None = None,
-    kalshi_fee_model: KalshiFeeModel | None = None,
+    ext_fee_model: PlatformFeeModel | None = None,
 ) -> Opportunity | None:
     """
     Check one direction of cross-platform arb.
 
     PM leg: BUY at pm_book ask (or SELL at pm_book bid)
-    Kalshi leg: BUY at kalshi_book ask (or SELL at kalshi_book bid)
+    EXT leg: BUY at ext_book ask (or SELL at ext_book bid)
 
     For arb: total cost < $1 when buying complementary outcomes across platforms.
     """
@@ -190,22 +185,21 @@ def _check_cross_platform_arb(
             return None
         pm_price = pm_book.best_bid.price
 
-    if kalshi_side == Side.BUY:
-        if not kalshi_book.best_ask:
+    if ext_side == Side.BUY:
+        if not ext_book.best_ask:
             return None
-        kalshi_price = kalshi_book.best_ask.price
+        ext_price = ext_book.best_ask.price
     else:
-        if not kalshi_book.best_bid:
+        if not ext_book.best_bid:
             return None
-        kalshi_price = kalshi_book.best_bid.price
+        ext_price = ext_book.best_bid.price
 
     # For BUY+BUY on complementary outcomes: total cost must < $1
-    # For BUY PM + SELL Kalshi: PM cost + (1 - Kalshi sell price) < $1
-    #   => PM cost < Kalshi sell price
-    if kalshi_side == Side.SELL:
-        total_cost = pm_price + (1.0 - kalshi_price)
+    # For BUY PM + SELL EXT: PM cost + (1 - EXT sell price) < $1
+    if ext_side == Side.SELL:
+        total_cost = pm_price + (1.0 - ext_price)
     else:
-        total_cost = pm_price + kalshi_price
+        total_cost = pm_price + ext_price
 
     if total_cost >= 1.0:
         return None
@@ -214,23 +208,23 @@ def _check_cross_platform_arb(
 
     # Depth-aware sizing
     pm_slippage = 1.005 if pm_side == Side.BUY else 0.995
-    kalshi_slippage = 1.005 if kalshi_side == Side.BUY else 0.995
+    ext_slippage = 1.005 if ext_side == Side.BUY else 0.995
     pm_depth = sweep_depth(pm_book, pm_side, max_price=pm_price * pm_slippage)
-    kalshi_depth = sweep_depth(kalshi_book, kalshi_side, max_price=kalshi_price * kalshi_slippage)
-    max_sets = min(pm_depth, kalshi_depth)
+    ext_depth = sweep_depth(ext_book, ext_side, max_price=ext_price * ext_slippage)
+    max_sets = min(pm_depth, ext_depth)
     if max_sets <= 0:
         return None
 
     # VWAP-aware cost
     pm_vwap = effective_price(pm_book, pm_side, max_sets)
-    kalshi_vwap = effective_price(kalshi_book, kalshi_side, max_sets)
-    if pm_vwap is None or kalshi_vwap is None:
+    ext_vwap = effective_price(ext_book, ext_side, max_sets)
+    if pm_vwap is None or ext_vwap is None:
         return None
 
-    if kalshi_side == Side.SELL:
-        total_cost = pm_vwap + (1.0 - kalshi_vwap)
+    if ext_side == Side.SELL:
+        total_cost = pm_vwap + (1.0 - ext_vwap)
     else:
-        total_cost = pm_vwap + kalshi_vwap
+        total_cost = pm_vwap + ext_vwap
 
     if total_cost >= 1.0:
         return None
@@ -239,18 +233,18 @@ def _check_cross_platform_arb(
 
     # Worst-fill prices for execution limits
     pm_worst = worst_fill_price(pm_book, pm_side, max_sets)
-    kalshi_worst = worst_fill_price(kalshi_book, kalshi_side, max_sets)
-    if pm_worst is None or kalshi_worst is None:
+    ext_worst = worst_fill_price(ext_book, ext_side, max_sets)
+    if pm_worst is None or ext_worst is None:
         return None
 
-    # Kalshi prices must survive cent rounding without meaningful drift
-    kalshi_cents = round(kalshi_worst * 100)
-    if kalshi_cents < 1 or kalshi_cents > 99:
-        return None  # Price outside Kalshi's valid range
-    if abs(kalshi_cents / 100.0 - kalshi_worst) > 0.005:
+    # Cent-based platforms (Kalshi, Fanatics) need price rounding check
+    ext_cents = round(ext_worst * 100)
+    if ext_cents < 1 or ext_cents > 99:
+        return None  # Price outside valid range for cent-based platforms
+    if abs(ext_cents / 100.0 - ext_worst) > 0.005:
         return None  # >0.5 cent drift from rounding — profit estimate unreliable
 
-    # Gas cost: only Polymarket leg (on-chain), Kalshi is centralized
+    # Gas cost: only Polymarket leg (on-chain), external platforms are centralized
     if gas_oracle:
         gas_cost_usd = gas_oracle.estimate_cost_usd(1, gas_per_order)
     else:
@@ -271,15 +265,14 @@ def _check_cross_platform_arb(
         pm_fee_deducted = profit_per_set - pm_fee_adj
         net_profit_per_set -= pm_fee_deducted
 
-    # Kalshi fees: taker only (no resolution fee)
-    if kalshi_fee_model:
-        kalshi_fee = kalshi_fee_model.taker_fee_per_contract(kalshi_vwap)
-        # Guard: reject arbs where Kalshi fee is disproportionate to contract price
-        # At extreme prices, ceil() rounding creates a $0.01 floor (e.g., 50% at $0.02)
-        fee_rate = kalshi_fee / kalshi_vwap if kalshi_vwap > 0 else 1.0
+    # External platform fees: taker only (no resolution fee for Kalshi/Fanatics)
+    if ext_fee_model:
+        ext_fee = ext_fee_model.taker_fee_per_contract(ext_vwap)
+        # Guard: reject arbs where fee is disproportionate to contract price
+        fee_rate = ext_fee / ext_vwap if ext_vwap > 0 else 1.0
         if fee_rate > 0.20:
             return None
-        net_profit_per_set -= kalshi_fee
+        net_profit_per_set -= ext_fee
 
     gross_profit = profit_per_set * max_sets
     net_profit = net_profit_per_set * max_sets - gas_cost_usd
@@ -295,16 +288,16 @@ def _check_cross_platform_arb(
             price=pm_worst, size=max_sets, platform="polymarket",
         ),
         LegOrder(
-            token_id=kalshi_ticker, side=kalshi_side,
-            price=kalshi_worst, size=max_sets, platform="kalshi",
+            token_id=ext_ticker, side=ext_side,
+            price=ext_worst, size=max_sets, platform=platform,
         ),
     )
 
     logger.info(
-        "CROSS-PLATFORM ARB: event=%s | pm_%s=%.4f kalshi_%s=%.4f | cost=%.4f profit/set=%.4f sets=%.1f net=$%.2f roi=%.2f%%",
-        event_id,
+        "CROSS-PLATFORM ARB: event=%s platform=%s | pm_%s=%.4f ext_%s=%.4f | cost=%.4f profit/set=%.4f sets=%.1f net=$%.2f roi=%.2f%%",
+        event_id, platform,
         "yes" if pm_side == Side.BUY else "no", pm_vwap,
-        "yes" if kalshi_side == Side.BUY else "no", kalshi_vwap,
+        "yes" if ext_side == Side.BUY else "no", ext_vwap,
         total_cost, profit_per_set, max_sets, net_profit, roi_pct,
     )
 

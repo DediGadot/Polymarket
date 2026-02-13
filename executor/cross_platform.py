@@ -1,9 +1,11 @@
 """
 Cross-platform execution engine.
 
-Handles placing orders on both Polymarket and Kalshi for cross-platform arb.
-Places Kalshi leg first (faster confirmation ~50ms) then Polymarket (on-chain ~2s).
-If Polymarket fails, attempts to unwind Kalshi position with tracked loss.
+Handles placing orders on both Polymarket and an external platform for cross-platform arb.
+Places external leg first (faster confirmation ~50ms) then Polymarket (on-chain ~2s).
+If Polymarket fails, attempts to unwind external position with tracked loss.
+
+Generalized for N platforms: determines external platform from leg metadata.
 """
 
 from __future__ import annotations
@@ -15,7 +17,6 @@ from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import OrderType
 
 from client.clob import create_limit_order, post_order
-from client.kalshi import KalshiClient, dollars_to_cents
 from scanner.models import (
     LegOrder,
     Opportunity,
@@ -34,9 +35,17 @@ class CrossPlatformUnwindFailed(Exception):
     pass
 
 
+def _dollars_to_cents(price: float) -> int:
+    """Convert dollar price (0.01-0.99) to cents (1-99) for cent-based platforms."""
+    cents = round(price * 100)
+    if cents < 1 or cents > 99:
+        raise ValueError(f"Price out of range: ${price:.4f} -> {cents} cents (must be 1-99)")
+    return cents
+
+
 def execute_cross_platform(
     pm_client: ClobClient,
-    kalshi_client: KalshiClient,
+    platform_clients: dict[str, object],
     opportunity: Opportunity,
     size: float,
     paper_trading: bool = False,
@@ -47,12 +56,13 @@ def execute_cross_platform(
     Execute a cross-platform arbitrage opportunity.
 
     Strategy:
-    1. Place Kalshi leg first (REST, ~50ms confirmation)
-    2. If Kalshi fills: place Polymarket leg (on-chain, ~2s)
-    3. If Polymarket fails: unwind Kalshi position (track loss)
+    1. Place external platform leg first (REST, ~50ms confirmation)
+    2. If external fills: place Polymarket leg (on-chain, ~2s)
+    3. If Polymarket fails: unwind external position (track loss)
     4. If both fill: compute combined P&L
 
     Args:
+        platform_clients: {platform_name: PlatformClient, ...}
         deadline_sec: Max total execution time. Abort PM leg if exceeded.
     """
     start_time = time.time()
@@ -61,8 +71,7 @@ def execute_cross_platform(
     if paper_trading:
         return _paper_execute_cross_platform(opportunity, size, start_time)
 
-    # Kalshi contracts are integer-count; enforce a common executable size
-    # across both platforms to avoid residual unhedged exposure.
+    # External contracts are integer-count; enforce a common executable size
     exec_size = int(size)
     if exec_size <= 0:
         elapsed_ms = (time.time() - start_time) * 1000
@@ -80,38 +89,41 @@ def execute_cross_platform(
         )
 
     # Separate legs by platform
-    pm_legs = [leg for leg in opportunity.legs if leg.platform == "polymarket"]
-    kalshi_legs = [leg for leg in opportunity.legs if leg.platform == "kalshi"]
+    pm_legs = [leg for leg in opportunity.legs if leg.platform in ("polymarket", "")]
+    ext_legs = [leg for leg in opportunity.legs if leg.platform not in ("polymarket", "")]
 
-    if not pm_legs or not kalshi_legs:
+    if not pm_legs or not ext_legs:
         raise ValueError(
-            f"Cross-platform opportunity must have both PM and Kalshi legs, "
-            f"got {len(pm_legs)} PM and {len(kalshi_legs)} Kalshi"
+            f"Cross-platform opportunity must have both PM and external legs, "
+            f"got {len(pm_legs)} PM and {len(ext_legs)} external"
         )
+
+    # Determine external platform from first ext leg
+    ext_platform = ext_legs[0].platform
+    ext_client = platform_clients.get(ext_platform)
+    if ext_client is None:
+        raise ValueError(f"No client for external platform '{ext_platform}'")
 
     order_ids: list[str] = []
     fill_prices: list[float] = []
     fill_sizes: list[float] = []
 
-    # Step 1: Place Kalshi leg(s)
-    # Our Kalshi OrderBook model is YES-token-based:
-    #   BUY leg  → side="yes", action="buy"  (buying YES tokens)
-    #   SELL leg → side="yes", action="sell"  (selling YES tokens = buying NO)
-    kalshi_filled = True
-    for leg in kalshi_legs:
+    # Step 1: Place external platform leg(s)
+    ext_filled = True
+    for leg in ext_legs:
         try:
-            price_cents = dollars_to_cents(leg.price)
-            kalshi_action = "buy" if leg.side == Side.BUY else "sell"
-            result = kalshi_client.place_order(
+            price_cents = _dollars_to_cents(leg.price)
+            ext_action = "buy" if leg.side == Side.BUY else "sell"
+            result = ext_client.place_order(
                 ticker=leg.token_id,
                 side="yes",
-                action=kalshi_action,
+                action=ext_action,
                 count=exec_size,
                 type="limit",
                 yes_price=price_cents,
             )
             order_data = result.get("order", result)
-            oid = order_data.get("order_id", "unknown_kalshi")
+            oid = order_data.get("order_id", f"unknown_{ext_platform}")
             status = order_data.get("status", "")
             order_ids.append(oid)
 
@@ -119,37 +131,35 @@ def execute_cross_platform(
                 fill_prices.append(leg.price)
                 fill_sizes.append(float(exec_size))
             elif status == "resting":
-                # Order placed but not yet filled — poll for fill
-                filled = _wait_for_kalshi_fill(kalshi_client, oid, timeout_sec=2.0)
+                filled = _wait_for_ext_fill(ext_client, oid, timeout_sec=2.0)
                 if filled:
                     fill_prices.append(leg.price)
                     fill_sizes.append(float(exec_size))
                 else:
-                    kalshi_client.cancel_order(oid)
+                    ext_client.cancel_order(oid)
                     fill_prices.append(0.0)
                     fill_sizes.append(0.0)
-                    kalshi_filled = False
+                    ext_filled = False
             else:
                 fill_prices.append(0.0)
                 fill_sizes.append(0.0)
-                kalshi_filled = False
+                ext_filled = False
         except Exception as e:
-            logger.error("Kalshi order failed for %s: %s", leg.token_id, e)
-            order_ids.append("failed_kalshi")
+            logger.error("%s order failed for %s: %s", ext_platform, leg.token_id, e)
+            order_ids.append(f"failed_{ext_platform}")
             fill_prices.append(0.0)
             fill_sizes.append(0.0)
-            kalshi_filled = False
+            ext_filled = False
 
-    if not kalshi_filled:
+    if not ext_filled:
         elapsed_ms = (time.time() - start_time) * 1000
-        logger.warning("Kalshi leg failed, aborting cross-platform arb")
-        # Cancel any resting Kalshi orders
+        logger.warning("%s leg failed, aborting cross-platform arb", ext_platform)
         for oid in order_ids:
-            if oid not in ("unknown_kalshi", "failed_kalshi"):
+            if not oid.startswith(("unknown_", "failed_")):
                 try:
-                    kalshi_client.cancel_order(oid)
+                    ext_client.cancel_order(oid)
                 except Exception as e:
-                    logger.error("Failed to cancel Kalshi order %s: %s", oid, e)
+                    logger.error("Failed to cancel %s order %s: %s", ext_platform, oid, e)
 
         return TradeResult(
             opportunity=opportunity,
@@ -167,10 +177,10 @@ def execute_cross_platform(
     if time.time() > deadline:
         elapsed_ms = (time.time() - start_time) * 1000
         logger.warning(
-            "Cross-platform deadline exceeded (%.0fms > %.0fms), unwinding Kalshi",
-            elapsed_ms, deadline_sec * 1000,
+            "Cross-platform deadline exceeded (%.0fms > %.0fms), unwinding %s",
+            elapsed_ms, deadline_sec * 1000, ext_platform,
         )
-        unwind_loss = _unwind_kalshi(kalshi_client, kalshi_legs, float(exec_size))
+        unwind_loss = _unwind_platform(ext_client, ext_platform, ext_legs, float(exec_size))
         return TradeResult(
             opportunity=opportunity,
             order_ids=order_ids,
@@ -219,9 +229,8 @@ def execute_cross_platform(
     elapsed_ms = (time.time() - start_time) * 1000
 
     if not pm_filled:
-        # Unwind Kalshi: sell the filled Kalshi position at market
-        logger.warning("Polymarket leg failed, unwinding Kalshi position...")
-        unwind_loss = _unwind_kalshi(kalshi_client, kalshi_legs, float(exec_size))
+        logger.warning("Polymarket leg failed, unwinding %s position...", ext_platform)
+        unwind_loss = _unwind_platform(ext_client, ext_platform, ext_legs, float(exec_size))
 
         return TradeResult(
             opportunity=opportunity,
@@ -285,17 +294,17 @@ def _paper_execute_cross_platform(
     )
 
 
-def _wait_for_kalshi_fill(
-    kalshi_client: KalshiClient,
+def _wait_for_ext_fill(
+    ext_client: object,
     order_id: str,
     timeout_sec: float = 2.0,
     poll_interval: float = 0.1,
 ) -> bool:
-    """Poll Kalshi order status until filled or timeout."""
+    """Poll external platform order status until filled or timeout."""
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
         try:
-            order = kalshi_client.get_order(order_id)
+            order = ext_client.get_order(order_id)
             status = order.get("order", order).get("status", "")
             if status in ("executed", "filled"):
                 return True
@@ -307,41 +316,40 @@ def _wait_for_kalshi_fill(
     return False
 
 
-def _unwind_kalshi(
-    kalshi_client: KalshiClient,
-    kalshi_legs: list[LegOrder],
+def _unwind_platform(
+    ext_client: object,
+    platform: str,
+    ext_legs: list[LegOrder],
     size: float,
 ) -> float:
     """
-    Unwind Kalshi positions by placing opposite market orders.
+    Unwind external platform positions by placing opposite market orders.
     Returns estimated unwind loss in dollars.
     Raises CrossPlatformUnwindFailed if any unwind fails.
     """
     stuck: list[dict] = []
     total_unwind_loss = 0.0
 
-    for leg in kalshi_legs:
+    for leg in ext_legs:
         opposite_action = "sell" if leg.side == Side.BUY else "buy"
         try:
-            kalshi_client.place_order(
+            ext_client.place_order(
                 ticker=leg.token_id,
                 side="yes",
                 action=opposite_action,
                 count=int(size),
                 type="market",
             )
-            # Estimate loss: spread + fees per contract
             total_unwind_loss += _UNWIND_LOSS_PER_CONTRACT * size
-            logger.info("Unwound Kalshi position: %s %s %d", opposite_action, leg.token_id, int(size))
+            logger.info("Unwound %s position: %s %s %d", platform, opposite_action, leg.token_id, int(size))
         except Exception as e:
-            logger.error("Failed to unwind Kalshi %s: %s", leg.token_id, e)
-            # Stuck position: estimate full cost as loss
+            logger.error("Failed to unwind %s %s: %s", platform, leg.token_id, e)
             total_unwind_loss += leg.price * size
             stuck.append({"ticker": leg.token_id, "side": leg.side.value, "size": size, "error": str(e)})
 
     if stuck:
         raise CrossPlatformUnwindFailed(
-            f"Failed to unwind {len(stuck)} Kalshi position(s): {stuck}"
+            f"Failed to unwind {len(stuck)} {platform} position(s): {stuck}"
         )
 
     return total_unwind_loss

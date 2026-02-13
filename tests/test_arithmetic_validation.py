@@ -545,8 +545,8 @@ class TestLatencyArbFeeValidation:
 # ===========================================================================
 class TestScorerArithmetic:
     def test_weights_sum_to_1(self):
-        from scanner.scorer import W_PROFIT, W_FILL, W_EFFICIENCY, W_URGENCY, W_COMPETITION
-        assert W_PROFIT + W_FILL + W_EFFICIENCY + W_URGENCY + W_COMPETITION == pytest.approx(1.0)
+        from scanner.scorer import W_PROFIT, W_FILL, W_EFFICIENCY, W_URGENCY, W_COMPETITION, W_PERSISTENCE
+        assert W_PROFIT + W_FILL + W_EFFICIENCY + W_URGENCY + W_COMPETITION + W_PERSISTENCE == pytest.approx(1.0)
 
     def test_spike_always_scores_higher_than_binary(self):
         """Same opportunity, but SPIKE_LAG should score higher due to urgency"""

@@ -168,7 +168,7 @@ def _check_buy_arb(
     if net_profit < min_profit_usd or roi_pct < min_roi_pct:
         return None
 
-    logger.info(
+    logger.debug(
         "BINARY BUY ARB: %s | cost=%.4f profit/set=%.4f sets=%.1f net=$%.2f roi=%.2f%%",
         market.question[:60], cost_per_set, profit_per_set, max_sets, net_profit, roi_pct,
     )
@@ -267,7 +267,7 @@ def _check_sell_arb(
     if net_profit < min_profit_usd or roi_pct < min_roi_pct:
         return None
 
-    logger.info(
+    logger.debug(
         "BINARY SELL ARB: %s | proceeds=%.4f profit/set=%.4f sets=%.1f net=$%.2f roi=%.2f%%",
         market.question[:60], proceeds_per_set, profit_per_set, max_sets, net_profit, roi_pct,
     )

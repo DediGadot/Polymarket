@@ -261,7 +261,11 @@ def verify_edge_intact(
     below min_edge_ratio of the original estimate, abort.
     Raises SafetyCheckFailed if edge has deteriorated too much.
     """
-    if opportunity.type in (OpportunityType.BINARY_REBALANCE, OpportunityType.NEGRISK_REBALANCE):
+    if opportunity.type in (
+        OpportunityType.BINARY_REBALANCE,
+        OpportunityType.NEGRISK_REBALANCE,
+        OpportunityType.SPIKE_LAG,
+    ):
         # For buy-all arbs: recompute cost from fresh best asks
         fresh_cost = 0.0
         for leg in opportunity.legs:
@@ -287,6 +291,81 @@ def verify_edge_intact(
                 f"Edge gone: fresh profit/set={fresh_profit_per_set:.4f} (was {opportunity.expected_profit_per_set:.4f})"
             )
 
+        if opportunity.expected_profit_per_set <= 0:
+            raise SafetyCheckFailed(
+                f"Original expected edge non-positive: {opportunity.expected_profit_per_set:.4f}"
+            )
+        ratio = fresh_profit_per_set / opportunity.expected_profit_per_set
+        if ratio < min_edge_ratio:
+            raise SafetyCheckFailed(
+                f"Edge eroded: fresh={fresh_profit_per_set:.4f} vs original={opportunity.expected_profit_per_set:.4f} "
+                f"(ratio={ratio:.2f} < {min_edge_ratio:.2f})"
+            )
+        return
+
+    if opportunity.type == OpportunityType.CROSS_PLATFORM_ARB:
+        # Reconstruct fresh synthetic basket cost:
+        # BUY leg contributes ask; SELL leg contributes (1 - bid) of complement.
+        fresh_cost = 0.0
+        for leg in opportunity.legs:
+            book = books.get(leg.token_id)
+            if not book:
+                raise SafetyCheckFailed(f"No fresh book for {leg.token_id}")
+            if leg.side == Side.BUY:
+                if not book.best_ask:
+                    raise SafetyCheckFailed(f"No ask in fresh book for {leg.token_id}")
+                fresh_cost += book.best_ask.price
+            else:
+                if not book.best_bid:
+                    raise SafetyCheckFailed(f"No bid in fresh book for {leg.token_id}")
+                fresh_cost += 1.0 - book.best_bid.price
+
+        fresh_profit_per_set = 1.0 - fresh_cost
+        if fresh_profit_per_set <= 0:
+            raise SafetyCheckFailed(
+                f"Edge gone: fresh profit/set={fresh_profit_per_set:.4f} (was {opportunity.expected_profit_per_set:.4f})"
+            )
+
+        if opportunity.expected_profit_per_set <= 0:
+            raise SafetyCheckFailed(
+                f"Original expected edge non-positive: {opportunity.expected_profit_per_set:.4f}"
+            )
+        ratio = fresh_profit_per_set / opportunity.expected_profit_per_set
+        if ratio < min_edge_ratio:
+            raise SafetyCheckFailed(
+                f"Edge eroded: fresh={fresh_profit_per_set:.4f} vs original={opportunity.expected_profit_per_set:.4f} "
+                f"(ratio={ratio:.2f} < {min_edge_ratio:.2f})"
+            )
+        return
+
+    if opportunity.type == OpportunityType.LATENCY_ARB:
+        # Latency arbs are single-leg directional edges; degrade edge by adverse top-of-book move.
+        if not opportunity.legs:
+            raise SafetyCheckFailed("Latency opportunity has no legs")
+        leg = opportunity.legs[0]
+        book = books.get(leg.token_id)
+        if not book:
+            raise SafetyCheckFailed(f"No fresh book for {leg.token_id}")
+
+        if leg.side == Side.BUY:
+            if not book.best_ask:
+                raise SafetyCheckFailed(f"No ask in fresh book for {leg.token_id}")
+            adverse_move = max(0.0, book.best_ask.price - leg.price)
+        else:
+            if not book.best_bid:
+                raise SafetyCheckFailed(f"No bid in fresh book for {leg.token_id}")
+            adverse_move = max(0.0, leg.price - book.best_bid.price)
+
+        fresh_profit_per_set = opportunity.expected_profit_per_set - adverse_move
+        if fresh_profit_per_set <= 0:
+            raise SafetyCheckFailed(
+                f"Edge gone: fresh profit/set={fresh_profit_per_set:.4f} (was {opportunity.expected_profit_per_set:.4f})"
+            )
+
+        if opportunity.expected_profit_per_set <= 0:
+            raise SafetyCheckFailed(
+                f"Original expected edge non-positive: {opportunity.expected_profit_per_set:.4f}"
+            )
         ratio = fresh_profit_per_set / opportunity.expected_profit_per_set
         if ratio < min_edge_ratio:
             raise SafetyCheckFailed(
@@ -318,19 +397,42 @@ def verify_inventory(
 def verify_cross_platform_books(
     opportunity: Opportunity,
     pm_books: dict[str, OrderBook],
-    kalshi_books: dict[str, OrderBook],
+    platform_books: dict[str, dict[str, OrderBook]] | dict[str, OrderBook] | None = None,
     min_depth: float = 1.0,
+    # Backward-compat alias
+    kalshi_books: dict[str, OrderBook] | None = None,
 ) -> None:
     """
-    Verify both Polymarket and Kalshi orderbooks have sufficient depth for
-    a cross-platform arbitrage opportunity.
+    Verify both Polymarket and external platform orderbooks have sufficient depth
+    for a cross-platform arbitrage opportunity.
+
+    Args:
+        platform_books: Either {platform_name: {ticker: OrderBook}} (new)
+                        or {ticker: OrderBook} (old kalshi_books compat).
+        kalshi_books: Backward-compat alias, merged into platform_books.
+
     Raises SafetyCheckFailed if any leg's book is missing or has insufficient depth.
     """
-    for leg in opportunity.legs:
-        if leg.platform == "kalshi":
-            book = kalshi_books.get(leg.token_id)
+    # Normalize platform_books into {platform: {ticker: OrderBook}}
+    ext_books: dict[str, dict[str, OrderBook]] = {}
+
+    if platform_books is not None:
+        # Detect old flat format: if any value is an OrderBook, treat as flat Kalshi dict
+        first_val = next(iter(platform_books.values()), None) if platform_books else None
+        if isinstance(first_val, OrderBook):
+            ext_books["kalshi"] = platform_books  # type: ignore[assignment]
         else:
+            ext_books = platform_books  # type: ignore[assignment]
+
+    if kalshi_books is not None and "kalshi" not in ext_books:
+        ext_books["kalshi"] = kalshi_books
+
+    for leg in opportunity.legs:
+        if leg.platform in ("polymarket", ""):
             book = pm_books.get(leg.token_id)
+        else:
+            platform_dict = ext_books.get(leg.platform, {})
+            book = platform_dict.get(leg.token_id)
 
         if not book:
             raise SafetyCheckFailed(

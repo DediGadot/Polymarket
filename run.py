@@ -26,7 +26,7 @@ import sys
 import time
 from dataclasses import replace
 
-from config import load_config, Config
+from config import load_config, Config, active_platforms
 from functools import partial
 
 from client.auth import build_clob_client
@@ -44,8 +44,10 @@ from scanner.scorer import rank_opportunities, ScoringContext
 from scanner.strategy import StrategySelector, MarketState
 from scanner.models import Opportunity, OpportunityType, Side
 from scanner.cross_platform import scan_cross_platform
+from scanner.filters import apply_pre_filters
 from scanner.kalshi_fees import KalshiFeeModel
 from scanner.matching import EventMatcher
+from scanner.platform_fees import PlatformFeeModel
 from executor.sizing import compute_position_size
 from executor.safety import (
     CircuitBreaker,
@@ -68,6 +70,7 @@ from monitor.pnl import PnLTracker
 from monitor.scan_tracker import ScanTracker
 from monitor.status import StatusWriter
 from monitor.logger import setup_logging
+from monitor.display import print_startup, print_cycle_header, print_scan_result, print_cycle_error, print_cycle_footer
 
 logger = logging.getLogger(__name__)
 
@@ -125,32 +128,6 @@ def _enforce_polymarket_only_mode(cfg: Config) -> None:
         cfg.cross_platform_enabled = False
 
 
-def _print_startup(args: argparse.Namespace, cfg: Config) -> None:
-    """Print the startup banner and full configuration summary."""
-    mode = _mode_label(args, cfg)
-
-    logger.info(_BANNER.strip())
-    logger.info("")
-    logger.info("%-20s %s", "Mode:", mode)
-    logger.info("%-20s $%.2f", "Min profit:", cfg.min_profit_usd)
-    logger.info("%-20s %.1f%%", "Min ROI:", cfg.min_roi_pct)
-    logger.info("%-20s $%.0f per trade / $%.0f total", "Max exposure:", cfg.max_exposure_per_trade, cfg.max_total_exposure)
-    logger.info("%-20s $%.0f/hr  $%.0f/day  %d consecutive", "Circuit breakers:", cfg.max_loss_per_hour, cfg.max_loss_per_day, cfg.max_consecutive_failures)
-    logger.info("%-20s %.1fs", "Scan interval:", cfg.scan_interval_sec)
-    if args.limit > 0:
-        logger.info("%-20s %d markets", "Scan limit:", args.limit)
-    logger.info("%-20s %s", "Order type:", "FAK (Fill-and-Kill)" if cfg.use_fak_orders else "GTC")
-    logger.info("%-20s %s", "WebSocket:", "enabled" if cfg.ws_enabled else "disabled")
-    logger.info("%-20s %s", "External APIs:", "enabled" if cfg.allow_non_polymarket_apis else "disabled (Polymarket-only)")
-    logger.info("%-20s %s", "Cross-platform:", "enabled" if cfg.cross_platform_enabled else "disabled")
-    logger.info("%-20s %s", "CLOB endpoint:", cfg.clob_host)
-    logger.info("%-20s %s", "Gamma endpoint:", cfg.gamma_host)
-    if cfg.cross_platform_enabled:
-        logger.info("%-20s %s", "Kalshi endpoint:", cfg.kalshi_host)
-        logger.info("%-20s %.0f%%", "Min confidence:", cfg.cross_platform_min_confidence * 100)
-    logger.info("")
-
-
 def _format_duration(seconds: float) -> str:
     """Format seconds into a human-readable duration string."""
     if seconds < 60:
@@ -163,22 +140,6 @@ def _format_duration(seconds: float) -> str:
     mins = minutes % 60
     return f"{hours}h {mins}m"
 
-
-def _print_opportunity(opp: Opportunity, index: int) -> None:
-    """Print a single opportunity in a structured format."""
-    type_label = opp.type.value
-    if opp.is_sell_arb:
-        type_label = f"[SELL] {type_label}"
-    logger.info(
-        "  #%-2d  %-25s  event=%-14s  profit=$%.2f  roi=%.2f%%  legs=%d  capital=$%.2f",
-        index,
-        type_label,
-        opp.event_id[:14],
-        opp.net_profit,
-        opp.roi_pct,
-        len(opp.legs),
-        opp.required_capital,
-    )
 
 
 def _print_scan_summary(tracker: ScanTracker) -> None:
@@ -243,21 +204,23 @@ def main() -> None:
         logger.error("Use --dry-run to scan without a wallet.")
         sys.exit(1)
 
-    setup_logging(cfg.log_level, json_log_file=args.json_log)
-    _print_startup(args, cfg)
+    log_file_path = setup_logging(cfg.log_level, json_log_file=args.json_log)
+    logger.info(_BANNER.strip())
+    logger.info("  Log file: %s", log_file_path)
+    print_startup(cfg, args)
 
     # Initialize client
     if args.dry_run:
-        logger.info("Initializing unauthenticated CLOB client (dry-run mode)...")
+        logger.debug("Initializing unauthenticated CLOB client (dry-run mode)...")
         from py_clob_client.client import ClobClient
         client = ClobClient(host=cfg.clob_host)
-        logger.info("Client ready -- using public endpoints only")
+        logger.debug("Client ready -- using public endpoints only")
     else:
-        logger.info("Authenticating with Polymarket CLOB...")
-        logger.info("  Deriving L2 API credentials from wallet...")
+        logger.debug("Authenticating with Polymarket CLOB...")
+        logger.debug("  Deriving L2 API credentials from wallet...")
         client = build_clob_client(cfg)
-        logger.info("Authentication successful -- client ready for %s",
-                     "paper trading" if cfg.paper_trading else "LIVE trading")
+        logger.debug("Authentication successful -- client ready for %s",
+                      "paper trading" if cfg.paper_trading else "LIVE trading")
 
     # Initialize components
     pnl = PnLTracker()
@@ -288,48 +251,72 @@ def main() -> None:
     position_tracker = PositionTracker(
         profile_address=cfg.polymarket_profile_address if not args.dry_run else "",
     )
-    logger.info("Safety systems initialized (circuit breaker active)")
-    logger.info("Book cache initialized (max_age=%.1fs)", cfg.book_cache_max_age_sec)
-    logger.info("Gas oracle initialized (rpc=%s, cache=%.0fs)", cfg.polygon_rpc_url, cfg.gas_cache_sec)
-    logger.info("Fee model %s", "enabled" if cfg.fee_model_enabled else "disabled")
-    logger.info("Latency scanner %s (min_edge=%.1f%%)", "enabled" if cfg.latency_enabled else "disabled", cfg.latency_min_edge_pct)
+    logger.debug("Safety systems initialized (circuit breaker active)")
+    logger.debug("Book cache initialized (max_age=%.1fs)", cfg.book_cache_max_age_sec)
+    logger.debug("Gas oracle initialized (rpc=%s, cache=%.0fs)", cfg.polygon_rpc_url, cfg.gas_cache_sec)
+    logger.debug("Fee model %s", "enabled" if cfg.fee_model_enabled else "disabled")
+    logger.debug("Latency scanner %s (min_edge=%.1f%%)", "enabled" if cfg.latency_enabled else "disabled", cfg.latency_min_edge_pct)
     strategy = StrategySelector(
         base_min_profit=cfg.min_profit_usd,
         base_min_roi=cfg.min_roi_pct,
         base_target_size=cfg.target_size_usd,
     )
-    logger.info("Spike detector initialized (threshold=%.1f%%, window=%.0fs, cooldown=%.0fs)",
-                cfg.spike_threshold_pct, cfg.spike_window_sec, cfg.spike_cooldown_sec)
-    logger.info("Strategy selector initialized (adaptive mode)")
+    logger.debug("Spike detector initialized (threshold=%.1f%%, window=%.0fs, cooldown=%.0fs)",
+                 cfg.spike_threshold_pct, cfg.spike_window_sec, cfg.spike_cooldown_sec)
+    logger.debug("Strategy selector initialized (adaptive mode)")
 
-    # Kalshi cross-platform initialization (gated behind config toggle)
-    kalshi_client = None
+    # Cross-platform initialization: build platform registry from credentials
+    platform_clients: dict[str, object] = {}
+    platform_fee_models: dict[str, PlatformFeeModel] = {}
     event_matcher = None
-    kalshi_fee_model = None
+
     if cfg.cross_platform_enabled:
-        if not cfg.kalshi_api_key_id or not cfg.kalshi_private_key_path:
-            logger.error("KALSHI_API_KEY_ID and KALSHI_PRIVATE_KEY_PATH required when CROSS_PLATFORM_ENABLED=true")
-            sys.exit(1)
-        from client.kalshi_auth import KalshiAuth
-        from client.kalshi import KalshiClient
-        kalshi_auth = KalshiAuth(
-            api_key_id=cfg.kalshi_api_key_id,
-            private_key_path=cfg.kalshi_private_key_path,
-        )
-        kalshi_client = KalshiClient(
-            auth=kalshi_auth,
-            host=cfg.kalshi_host,
-            demo=cfg.kalshi_demo,
-        )
-        event_matcher = EventMatcher(
-            manual_map_path=cfg.cross_platform_manual_map,
-        )
-        kalshi_fee_model = KalshiFeeModel()
-        logger.info("Kalshi client initialized (host=%s, demo=%s)", cfg.kalshi_host, cfg.kalshi_demo)
-        logger.info("Cross-platform matching enabled (min_confidence=%.2f, map=%s)",
-                    cfg.cross_platform_min_confidence, cfg.cross_platform_manual_map)
+        detected = active_platforms(cfg)
+        if detected:
+            event_matcher = EventMatcher(
+                manual_map_path=cfg.cross_platform_manual_map,
+                verified_path=cfg.cross_platform_verified_path,
+            )
+
+        for pname in detected:
+            if pname == "kalshi":
+                from client.kalshi_auth import KalshiAuth
+                from client.kalshi import KalshiClient
+                kalshi_auth = KalshiAuth(
+                    api_key_id=cfg.kalshi_api_key_id,
+                    private_key_path=cfg.kalshi_private_key_path,
+                )
+                platform_clients["kalshi"] = KalshiClient(
+                    auth=kalshi_auth,
+                    host=cfg.kalshi_host,
+                    demo=cfg.kalshi_demo,
+                )
+                platform_fee_models["kalshi"] = KalshiFeeModel()
+                logger.debug("Kalshi client initialized (host=%s, demo=%s)", cfg.kalshi_host, cfg.kalshi_demo)
+
+            elif pname == "fanatics":
+                from client.fanatics_auth import FanaticsAuth
+                from client.fanatics import FanaticsClient
+                from scanner.fanatics_fees import FanaticsFeeModel
+                fanatics_auth = FanaticsAuth(
+                    api_key=cfg.fanatics_api_key,
+                    api_secret=cfg.fanatics_api_secret,
+                )
+                platform_clients["fanatics"] = FanaticsClient(
+                    auth=fanatics_auth,
+                    host=cfg.fanatics_host,
+                )
+                platform_fee_models["fanatics"] = FanaticsFeeModel()
+                logger.debug("Fanatics client initialized (host=%s)", cfg.fanatics_host)
+
+        if platform_clients:
+            logger.debug("Cross-platform enabled: %s (min_confidence=%.2f, map=%s)",
+                         ", ".join(platform_clients.keys()),
+                         cfg.cross_platform_min_confidence, cfg.cross_platform_manual_map)
+        else:
+            logger.debug("Cross-platform enabled but no platform credentials configured")
     else:
-        logger.info("Cross-platform arbitrage disabled")
+        logger.debug("Cross-platform arbitrage disabled")
 
     # WebSocket bridge for real-time book/price feeds
     ws_bridge: WSBridge | None = None
@@ -340,9 +327,9 @@ def main() -> None:
             spike_detector=spike_detector,
             max_retries=cfg.ws_reconnect_max,
         )
-        logger.info("WebSocket bridge initialized (url=%s)", cfg.ws_market_url)
+        logger.debug("WebSocket bridge initialized (url=%s)", cfg.ws_market_url)
     elif cfg.ws_enabled:
-        logger.info("WebSocket disabled in dry-run mode (REST only)")
+        logger.debug("WebSocket disabled in dry-run mode (REST only)")
 
     status_writer = StatusWriter(file_path="status.md")
     status_writer.write_cycle(
@@ -357,8 +344,8 @@ def main() -> None:
         current_exposure=0.0,
         scan_only=args.scan_only,
     )
-    logger.info("Status writer initialized (status.md, last %d cycles)", status_writer.max_history)
-    logger.info("")
+    logger.debug("Status writer initialized (status.md, last %d cycles)", status_writer.max_history)
+    logger.debug("")
 
     # Graceful shutdown handler
     shutdown_requested = False
@@ -380,17 +367,19 @@ def main() -> None:
     total_opps_found = 0
     total_trades_executed = 0
     has_crypto_momentum = False
+    best_profit_ever = 0.0
+    best_roi_ever = 0.0
 
     while not shutdown_requested:
         cycle += 1
         cycle_start = time.time()
 
         try:
-            logger.info("── Cycle %d ──────────────────────────────────────────────", cycle)
+            print_cycle_header(cycle)
 
             # Step 1: Fetch active markets
-            step_start = time.time()
-            logger.info("[1/3] Fetching active markets from Gamma API...")
+            fetch_start = time.time()
+            logger.debug("[1/3] Fetching active markets from Gamma API...")
             all_markets = get_all_markets(cfg.gamma_host)
             if args.limit > 0:
                 # Never truncate negRisk markets -- they require complete outcome
@@ -399,17 +388,30 @@ def main() -> None:
                 negrisk_mkts = [m for m in all_markets if m.neg_risk]
                 binary_mkts = [m for m in all_markets if not m.neg_risk][:args.limit]
                 all_markets = binary_mkts + negrisk_mkts
+            pre_filter_count = len(all_markets)
+            all_markets = apply_pre_filters(
+                all_markets,
+                min_volume=cfg.min_volume_filter,
+                min_hours=cfg.min_hours_to_resolution,
+            )
+            if len(all_markets) < pre_filter_count:
+                logger.debug(
+                    "      Pre-filtered %d → %d markets (volume≥%.0f, hours≥%.1f)",
+                    pre_filter_count, len(all_markets),
+                    cfg.min_volume_filter, cfg.min_hours_to_resolution,
+                )
             events = build_events(all_markets)
             event_questions = {e.event_id: e.title for e in events}
 
             binary_markets = [m for m in all_markets if not m.neg_risk]
             negrisk_events = [e for e in events if e.neg_risk]
 
-            logger.info(
+            fetch_elapsed = time.time() - fetch_start
+            logger.debug(
                 "      Received %s markets in %.1fs",
-                f"{len(all_markets):,}", time.time() - step_start,
+                f"{len(all_markets):,}", fetch_elapsed,
             )
-            logger.info(
+            logger.debug(
                 "      %s binary  |  %d negRisk events (%s markets)",
                 f"{len(binary_markets):,}",
                 len(negrisk_events),
@@ -428,10 +430,10 @@ def main() -> None:
             if ws_bridge:
                 ws_updates = ws_bridge.drain()
                 if ws_updates > 0:
-                    logger.info("      WebSocket: drained %d updates into cache", ws_updates)
+                    logger.debug("      WebSocket: drained %d updates into cache", ws_updates)
 
             # Step 2: Scan for opportunities (strategy-tuned)
-            step_start = time.time()
+            scan_start = time.time()
 
             # Select adaptive strategy for this cycle
             market_state = MarketState(
@@ -441,7 +443,7 @@ def main() -> None:
                 recent_win_rate=pnl.win_rate / 100.0 if not args.scan_only else 0.50,
             )
             scan_params = strategy.select(market_state)
-            logger.info("[2/3] Scanning for arbitrage (strategy=%s)...", scan_params.mode.value)
+            logger.debug("[2/3] Scanning for arbitrage (strategy=%s)...", scan_params.mode.value)
 
             # Create BookFetcher callable: parallel REST wrapped with cache layer
             poly_rest_fetcher = partial(get_orderbooks_parallel, client, max_workers=cfg.book_fetch_workers)
@@ -449,7 +451,7 @@ def main() -> None:
 
             binary_opps: list[Opportunity] = []
             if scan_params.binary_enabled:
-                logger.info("      Scanning %s binary markets...", f"{len(binary_markets):,}")
+                logger.debug("      Scanning %s binary markets...", f"{len(binary_markets):,}")
                 binary_opps = scan_binary_markets(
                     poly_book_fetcher, binary_markets,
                     scan_params.min_profit_usd, scan_params.min_roi_pct,
@@ -460,7 +462,7 @@ def main() -> None:
 
             negrisk_opps: list[Opportunity] = []
             if scan_params.negrisk_enabled:
-                logger.info("      Scanning %d negRisk events...", len(negrisk_events))
+                logger.debug("      Scanning %d negRisk events...", len(negrisk_events))
                 # Fetch expected market counts for event completeness validation.
                 # This prevents false arbs from incomplete outcome sets.
                 event_market_counts = get_event_market_counts(cfg.gamma_host)
@@ -480,7 +482,7 @@ def main() -> None:
                 crypto_markets = latency_scanner.identify_crypto_markets(all_markets)
                 has_crypto_momentum = bool(crypto_markets)
                 if crypto_markets:
-                    logger.info("      Scanning %d crypto 15-min markets for latency arb...", len(crypto_markets))
+                    logger.debug("      Scanning %d crypto 15-min markets for latency arb...", len(crypto_markets))
                     # Fetch spot prices
                     symbols_seen: set[str] = set()
                     for _, sym, _ in crypto_markets:
@@ -513,7 +515,7 @@ def main() -> None:
                         spike_detector.update(m.yes_token_id, book.midpoint)
                 spikes = spike_detector.detect_spikes()
                 if spikes:
-                    logger.info("      Detected %d price spikes, checking siblings...", len(spikes))
+                    logger.debug("      Detected %d price spikes, checking siblings...", len(spikes))
                     # Build event lookup
                     event_map = {e.event_id: e for e in events}
                     gas_cost = gas_oracle.estimate_cost_usd(1, cfg.gas_per_order)
@@ -526,45 +528,67 @@ def main() -> None:
                                 min_profit_usd=scan_params.min_profit_usd,
                             ))
 
-            # Cross-platform arbitrage (Polymarket vs Kalshi)
+            # Cross-platform arbitrage (Polymarket vs external platforms)
             cross_platform_opps: list[Opportunity] = []
-            if cfg.cross_platform_enabled and kalshi_client and event_matcher:
-                logger.info("      Scanning cross-platform arbitrage (Kalshi)...")
-                # Fetch Kalshi markets
-                kalshi_markets = kalshi_client.get_all_markets(status="open")
-                logger.info("      Fetched %d active Kalshi markets", len(kalshi_markets))
+            if cfg.cross_platform_enabled and platform_clients and event_matcher:
+                logger.debug("      Scanning cross-platform arbitrage (%s)...", ", ".join(platform_clients.keys()))
 
-                # Match events across platforms
-                matched_events = event_matcher.match_events(events, kalshi_markets)
-                logger.info("      Matched %d events across platforms", len(matched_events))
+                # Fetch markets from all platforms (gracefully skip NotImplementedError)
+                all_platform_markets: dict[str, list] = {}
+                for pname, pclient in platform_clients.items():
+                    try:
+                        mkts = pclient.get_all_markets(status="open")
+                        all_platform_markets[pname] = mkts
+                        logger.debug("      Fetched %d active %s markets", len(mkts), pname)
+                    except NotImplementedError:
+                        logger.debug("      Skipping %s (API not yet available)", pname)
+                    except Exception as e:
+                        logger.warning("      Failed to fetch %s markets: %s", pname, e)
 
-                if matched_events:
-                    # Collect all token IDs needed from both platforms
-                    pm_token_ids: list[str] = []
-                    kalshi_tickers: list[str] = []
-                    for match in matched_events:
-                        for pm_mkt in match.pm_markets:
-                            pm_token_ids.append(pm_mkt.yes_token_id)
-                            pm_token_ids.append(pm_mkt.no_token_id)
-                        kalshi_tickers.extend(match.kalshi_tickers)
+                if all_platform_markets:
+                    # Match events across platforms
+                    matched_events = event_matcher.match_events(events, all_platform_markets)
+                    logger.debug("      Matched %d events across platforms", len(matched_events))
 
-                    # Fetch orderbooks from both platforms
-                    pm_cross_books = poly_book_fetcher(pm_token_ids) if pm_token_ids else {}
-                    kalshi_cross_books = kalshi_client.get_orderbooks(kalshi_tickers) if kalshi_tickers else {}
-                    book_cache.store_books(pm_cross_books)
+                    if matched_events:
+                        # Collect all token IDs needed from PM and each platform
+                        pm_token_ids: list[str] = []
+                        platform_tickers: dict[str, list[str]] = {}
+                        for match in matched_events:
+                            for pm_mkt in match.pm_markets:
+                                pm_token_ids.append(pm_mkt.yes_token_id)
+                                pm_token_ids.append(pm_mkt.no_token_id)
+                            for pm in match.platform_matches:
+                                platform_tickers.setdefault(pm.platform, []).extend(pm.tickers)
 
-                    cross_platform_opps = scan_cross_platform(
-                        matched_events, pm_cross_books, kalshi_cross_books,
-                        min_profit_usd=scan_params.min_profit_usd,
-                        min_roi_pct=scan_params.min_roi_pct,
-                        gas_per_order=cfg.gas_per_order,
-                        gas_oracle=gas_oracle,
-                        pm_fee_model=fee_model,
-                        kalshi_fee_model=kalshi_fee_model,
-                        min_confidence=cfg.cross_platform_min_confidence,
-                    )
-                    if cross_platform_opps:
-                        logger.info("      Found %d cross-platform opportunities", len(cross_platform_opps))
+                        # Fetch orderbooks from PM and each platform
+                        pm_cross_books = poly_book_fetcher(pm_token_ids) if pm_token_ids else {}
+                        book_cache.store_books(pm_cross_books)
+
+                        all_platform_books: dict[str, dict] = {}
+                        for pname, tickers in platform_tickers.items():
+                            pclient = platform_clients.get(pname)
+                            if pclient and tickers:
+                                try:
+                                    all_platform_books[pname] = pclient.get_orderbooks(tickers)
+                                except NotImplementedError:
+                                    logger.debug("      Skipping %s orderbooks (API not available)", pname)
+                                except Exception as e:
+                                    logger.warning("      Failed to fetch %s orderbooks: %s", pname, e)
+
+                        cross_platform_opps = scan_cross_platform(
+                            matched_events, pm_cross_books,
+                            platform_books=all_platform_books,
+                            min_profit_usd=scan_params.min_profit_usd,
+                            min_roi_pct=scan_params.min_roi_pct,
+                            gas_per_order=cfg.gas_per_order,
+                            gas_oracle=gas_oracle,
+                            pm_fee_model=fee_model,
+                            platform_fee_models=platform_fee_models,
+                            min_confidence=cfg.cross_platform_min_confidence,
+                        )
+                        if cross_platform_opps:
+                            logger.debug("      Found %d cross-platform opportunities", len(cross_platform_opps))
 
             all_opps = binary_opps + negrisk_opps + latency_opps + spike_opps + cross_platform_opps
 
@@ -585,19 +609,35 @@ def main() -> None:
             scored_opps = rank_opportunities(all_opps, contexts=contexts)
             total_opps_found += len(all_opps)
 
-            scan_elapsed = time.time() - step_start
-            if scored_opps:
-                best = scored_opps[0]
-                logger.info(
-                    "      Found %d opportunities in %.1fs (best score: %.2f, best profit: $%.2f)",
-                    len(scored_opps), scan_elapsed,
-                    best.total_score,
-                    max(o.net_profit for o in all_opps),
-                )
-                for i, scored in enumerate(scored_opps, 1):
-                    _print_opportunity(scored.opportunity, i)
-            else:
-                logger.info("      No opportunities found (%.1fs)", scan_elapsed)
+            scan_elapsed = time.time() - scan_start
+
+            scanner_counts = {
+                "binary": len(binary_opps),
+                "negrisk": len(negrisk_opps),
+                "latency": len(latency_opps),
+                "spike": len(spike_opps),
+                "cross_platform": len(cross_platform_opps),
+            }
+
+            # Track best-ever stats for scan-only footer
+            for opp in all_opps:
+                if opp.net_profit > best_profit_ever:
+                    best_profit_ever = opp.net_profit
+                if opp.roi_pct > best_roi_ever:
+                    best_roi_ever = opp.roi_pct
+
+            print_scan_result(
+                scored_opps=scored_opps,
+                event_questions=event_questions,
+                scanner_counts=scanner_counts,
+                scan_elapsed=scan_elapsed,
+                fetch_elapsed=fetch_elapsed,
+                markets_count=len(all_markets),
+                binary_count=len(binary_markets),
+                negrisk_event_count=len(negrisk_events),
+                negrisk_market_count=sum(len(e.markets) for e in negrisk_events),
+                strategy_name=scan_params.mode.value,
+            )
 
             if args.scan_only:
                 tracker.record_cycle(cycle, len(all_markets), all_opps)
@@ -613,10 +653,15 @@ def main() -> None:
                     current_exposure=0.0,
                     scan_only=True,
                 )
-                cycle_elapsed = time.time() - cycle_start
-                logger.info(
-                    "      Cycle %d complete in %.1fs  |  session: %d cycles, %d opps found",
-                    cycle, cycle_elapsed, cycle, total_opps_found,
+                print_cycle_footer(
+                    cycle=cycle,
+                    cycle_elapsed=time.time() - cycle_start,
+                    total_opps=total_opps_found,
+                    total_trades=0,
+                    total_pnl=0.0,
+                    best_profit=best_profit_ever,
+                    best_roi=best_roi_ever,
+                    scan_only=True,
                 )
                 _sleep_remaining(cycle_start, cfg.scan_interval_sec, shutdown_requested)
                 continue
@@ -633,7 +678,7 @@ def main() -> None:
                         "      [%d/%d] Executing %s  event=%s  score=%.2f  profit=$%.2f...",
                         i, len(scored_opps), opp.type.value, opp.event_id[:14], scored.total_score, opp.net_profit,
                     )
-                    _execute_single(client, cfg, opp, pnl, breaker, gas_oracle=gas_oracle, position_tracker=position_tracker, kalshi_client=kalshi_client)
+                    _execute_single(client, cfg, opp, pnl, breaker, gas_oracle=gas_oracle, position_tracker=position_tracker, platform_clients=platform_clients)
                     total_trades_executed += 1
                     logger.info(
                         "      [%d/%d] Trade complete  |  session P&L: $%.2f (%d trades)",
@@ -672,12 +717,23 @@ def main() -> None:
         except KeyboardInterrupt:
             break
         except Exception as e:
-            logger.error("Cycle %d failed: %s", cycle, e, exc_info=True)
+            # Full traceback goes to the debug log file; console gets clean summary
+            is_api_error = "Request exception" in str(e) or "PolyApiException" in type(e).__name__
+            if is_api_error:
+                logger.debug("Cycle %d failed: %s", cycle, e, exc_info=True)
+            else:
+                logger.error("Cycle %d failed: %s", cycle, e, exc_info=True)
+            print_cycle_error(e)
 
-        cycle_elapsed = time.time() - cycle_start
-        logger.info(
-            "      Cycle %d complete in %.1fs  |  session: %d trades, P&L $%.2f",
-            cycle, cycle_elapsed, pnl.total_trades, pnl.total_pnl,
+        print_cycle_footer(
+            cycle=cycle,
+            cycle_elapsed=time.time() - cycle_start,
+            total_opps=total_opps_found,
+            total_trades=total_trades_executed if not args.scan_only else 0,
+            total_pnl=pnl.total_pnl if not args.scan_only else 0.0,
+            best_profit=best_profit_ever if args.scan_only else 0.0,
+            best_roi=best_roi_ever if args.scan_only else 0.0,
+            scan_only=args.scan_only,
         )
         _sleep_remaining(cycle_start, cfg.scan_interval_sec, shutdown_requested)
 
@@ -765,7 +821,7 @@ def _execute_single(
     breaker: CircuitBreaker,
     gas_oracle: GasOracle | None = None,
     position_tracker: PositionTracker | None = None,
-    kalshi_client: object | None = None,
+    platform_clients: dict[str, object] | None = None,
 ) -> None:
     """Execute a single opportunity with full safety checks."""
     # Opportunity TTL check (reject stale opportunities)
@@ -778,16 +834,25 @@ def _execute_single(
 
     # Safety checks independent of size
     pm_books: dict[str, object] = {}
-    kalshi_books: dict[str, object] = {}
+    ext_books_nested: dict[str, dict[str, object]] = {}
     if opp.type == OpportunityType.CROSS_PLATFORM_ARB:
-        if kalshi_client is None:
-            raise SafetyCheckFailed("kalshi_client required for cross-platform opportunity")
-        pm_token_ids = [leg.token_id for leg in opp.legs if leg.platform != "kalshi"]
-        kalshi_token_ids = [leg.token_id for leg in opp.legs if leg.platform == "kalshi"]
+        if not platform_clients:
+            raise SafetyCheckFailed("platform_clients required for cross-platform opportunity")
+        pm_token_ids = [leg.token_id for leg in opp.legs if leg.platform in ("polymarket", "")]
+        ext_by_platform: dict[str, list[str]] = {}
+        for leg in opp.legs:
+            if leg.platform not in ("polymarket", ""):
+                ext_by_platform.setdefault(leg.platform, []).append(leg.token_id)
         pm_books = get_orderbooks(client, pm_token_ids) if pm_token_ids else {}
-        kalshi_books = kalshi_client.get_orderbooks(kalshi_token_ids) if kalshi_token_ids else {}
-        verify_cross_platform_books(opp, pm_books, kalshi_books, min_depth=1.0)
-        books = {**pm_books, **kalshi_books}
+        for pname, tids in ext_by_platform.items():
+            pclient = platform_clients.get(pname)
+            if pclient:
+                ext_books_nested[pname] = pclient.get_orderbooks(tids)
+        verify_cross_platform_books(opp, pm_books, platform_books=ext_books_nested, min_depth=1.0)
+        # Merge all books into flat dict for verify_prices_fresh / verify_edge_intact
+        books = dict(pm_books)
+        for pbooks in ext_books_nested.values():
+            books.update(pbooks)
     else:
         token_ids = [leg.token_id for leg in opp.legs]
         books = get_orderbooks(client, token_ids)
@@ -829,7 +894,7 @@ def _execute_single(
             verify_inventory(position_tracker, opp, execution_size)
 
     if opp.type == OpportunityType.CROSS_PLATFORM_ARB:
-        verify_cross_platform_books(sized_opp, pm_books, kalshi_books, min_depth=execution_size)
+        verify_cross_platform_books(sized_opp, pm_books, platform_books=ext_books_nested, min_depth=execution_size)
 
     logger.info("        Verifying orderbook depth...")
     verify_depth(sized_opp, books)
@@ -850,7 +915,7 @@ def _execute_single(
         paper_trading=cfg.paper_trading,
         use_fak=cfg.use_fak_orders,
         order_timeout_sec=cfg.order_timeout_sec,
-        kalshi_client=kalshi_client,
+        platform_clients=platform_clients,
     )
 
     # Record

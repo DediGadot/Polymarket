@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Polymarket Arbitrage Bot: 20-Point Deep Analysis</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    color: #1a1a1a;
+    background: #fff;
+    padding: 4px;
+  }
+  h1 {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    padding-bottom: 3px;
+    border-bottom: 2px solid #222;
+  }
+  h2 {
+    font-size: 17px;
+    font-weight: 700;
+    margin-top: 10px;
+    margin-bottom: 4px;
+    color: #333;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 2px;
+  }
+  p {
+    margin-bottom: 6px;
+    text-align: justify;
+  }
+  strong { font-weight: 600; }
+  code {
+    font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+    font-size: 13px;
+    background: #f4f4f4;
+    padding: 1px 3px;
+    border-radius: 2px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Polymarket Arbitrage Bot: 20-Point Deep Analysis</h1>
+
+<h2>WHAT IT DOES (10 points)</h2>
+
+<p><strong>1. Five-scanner arbitrage engine covering every known prediction market edge type.</strong> Binary rebalancing (YES+NO &lt; $1), NegRisk multi-outcome rebalancing (historically 73% of arb profits), 15-min crypto latency arb (spot vs prediction lag), news-driven spike detection (sibling mispricing), and cross-platform Polymarket&harr;Kalshi divergence. 6,594 LOC core, 661 tests, 89-91% coverage.</p>
+
+<p><strong>2. VWAP-aware, depth-first scanning prevents the &ldquo;phantom profit&rdquo; trap.</strong> Every scanner walks the full orderbook via <code>sweep_depth()</code> / <code>effective_price()</code> / <code>worst_fill_price()</code> rather than trusting best-bid/ask. Worst-fill becomes the execution limit price; VWAP drives profit math. This separation is correct and critical &mdash; most open-source PM bots miss this.</p>
+
+<p><strong>3. Adaptive 4-mode strategy system tunes itself per cycle.</strong> <code>StrategySelector</code> dynamically switches AGGRESSIVE (1.5x size, low thresholds), CONSERVATIVE (0.5x size, high thresholds), SPIKE_HUNT (disables steady-state scanners), or LATENCY_FOCUS based on real-time gas prices, spread widths, spike activity, crypto momentum, and trailing win rate.</p>
+
+<p><strong>4. 6-factor composite scorer replaces naive ROI sorting.</strong> Profit (22%, log-scaled), fill probability (22%, depth ratio), capital efficiency (17%, annualized ROI), urgency (17%, spike=1.0/latency=0.85/steady=0.50), competition (7%, trade count exponential decay), persistence (15%, arb stability tracking). Weight grid search benchmark tool enables data-driven tuning.</p>
+
+<p><strong>5. 8-point safety stack + 3-condition circuit breaker.</strong> Pre-trade: price freshness, edge revalidation (re-fetches books), depth verification, gas/profit ratio cap (50%), opportunity TTL (0.5s spikes, 2s steady), max legs (15, one batch), inventory for sell legs, cross-platform book validation. Circuit breaker: hourly loss ($50), daily loss ($200), 5 consecutive failures &rarr; halt.</p>
+
+<p><strong>6. NegRisk completeness validation prevents the #1 false positive.</strong> Compares active market count against <code>event_market_counts</code> from the events API. Inactive &ldquo;Other&rdquo; outcomes create a probability gap that looks like arb but isn&rsquo;t. <code>neg_risk_market_id</code> grouping correctly handles events with multiple outcome pools (moneyline vs spread vs totals). This alone probably saved more money than any single trade made.</p>
+
+<p><strong>7. Fee-correct dual-platform profit calculation.</strong> <code>MarketFeeModel</code>: PM taker (0% standard, parabolic up to 3.15% on 15-min crypto at 50/50 odds) + $0.02/set resolution fee. <code>KalshiFeeModel</code>: <code>math.ceil(0.07 * C * P * (1-P))</code> per contract, no resolution fee. Fees deducted <em>before</em> min-profit filtering, not after.</p>
+
+<p><strong>8. BookFetcher abstraction cleanly decouples scanners from data source.</strong> <code>Callable[[list[str]], dict[str, OrderBook]]</code> with three implementations (parallel REST, BookCache caching layer, WSBridge). Scanners never know where data comes from. This is textbook interface segregation.</p>
+
+<p><strong>9. Half-Kelly sizing with 4 hard caps.</strong> <code>compute_position_size()</code>: Kelly at 50% (halves growth rate by 25%, cuts variance by 50%), bounded by max-per-trade ($500), max-total ($5K), current exposure headroom, and orderbook depth. Rejects sizes where fixed gas overwhelms edge. Academically sound for high-frequency arb.</p>
+
+<p><strong>10. Cross-platform Kalshi integration with execution-order optimization.</strong> Kalshi first (~50ms REST), PM second (~2s on-chain). If PM fails after Kalshi fills, unwind logic market-sells the Kalshi position. Fuzzy matching (<code>token_set_ratio=95%</code>) with 3-tier confidence: manual JSON map (1.0), verified matches (preserved), unverified fuzzy (0.0, logged but blocked).</p>
+
+<h2>STEP-FUNCTION IMPROVEMENT OPPORTUNITIES (10 points)</h2>
+
+<p><strong>11. Replace the poll loop with event-driven execution &mdash; this is the single highest-ROI change.</strong> The synchronous <code>while True: fetch-&gt;scan-&gt;score-&gt;execute-&gt;sleep</code> loop means a 30s+ full-market scan while arbs decay in milliseconds. A 2025 study found 78% of arb opportunities in low-volume markets failed due to execution lag. <strong>Fix:</strong> WebSocket-triggered scan-on-price-change. When a WS book update creates a potential arb (sum of cached asks dips below $1), fire the safety/execution pipeline immediately for <em>that market only</em>, not after scanning 25K markets. Target: sub-100ms detect-to-order.</p>
+
+<p><strong>12. Parallelize the 5 independent scanners &mdash; 3-5x scan speed for free.</strong> Binary, NegRisk, latency, spike, and cross-platform scanners share no mutable state. They all take a <code>BookFetcher</code> and return <code>list[Opportunity]</code>. Currently sequential. <strong>Fix:</strong> <code>concurrent.futures.ThreadPoolExecutor(max_workers=5)</code> with one future per scanner. Scan time drops from ~sum(all) to ~max(slowest). The <code>BookCache</code> needs <code>threading.RLock</code> (point 17&rsquo;s fix) to support this.</p>
+
+<p><strong>13. Add a maker strategy to eliminate taker fees entirely.</strong> The bot is 100% taker. Polymarket charges 0% maker fees &mdash; resting limit orders are free. On 15-min crypto markets, taker fees peak at 3.15% and eat most of the latency edge. <strong>Fix:</strong> When an arb is detected but not urgent (steady-state binary/negrisk), post resting limit orders at the required prices instead of crossing the spread. This turns a fee headwind into zero-cost execution and captures spread as bonus profit.</p>
+
+<p><strong>14. Colocate + private RPC + HTTP/2 &mdash; infrastructure-level latency reduction.</strong> All PM orders go through <code>py-clob-client</code> over public HTTPS with HTTP/2 disabled (GOAWAY workaround). Professional arbitrageurs target sub-10ms latency via dedicated RPC nodes and colocated servers. <strong>Fix:</strong> Private Polygon RPC (Alchemy/QuickNode), re-enable HTTP/2 with keep-alive (py-clob-client v0.34.5 supports it natively &mdash; test against GOAWAY fix), VPS near Polymarket&rsquo;s matching engine (US-East). Combined with event-driven architecture (point 11), this could achieve sub-100ms end-to-end.</p>
+
+<p><strong>15. Persist arb history across sessions for warm-start intelligence.</strong> Every restart is cold: no learned market profiles, no historical arb tracking, no warm BookCache. The <code>ArbTracker</code>/<code>confidence</code> module exists but is session-scoped only. <strong>Fix:</strong> SQLite or append-only NDJSON for arb history (market&rarr;win rate, avg edge, typical depth, time-of-day patterns). Feed into the scorer&rsquo;s persistence factor (currently 15% weight but seeded at default 0.5) and the strategy selector&rsquo;s mode choice. This turns the bot from stateless to learning.</p>
+
+<p><strong>16. Address cross-platform settlement divergence &mdash; the silent portfolio killer.</strong> The 2024 government shutdown case showed Polymarket and Kalshi can settle identically-titled events differently, turning &ldquo;risk-free&rdquo; arb into total loss. Fuzzy title matching (95% threshold) catches naming differences but not settlement methodology differences. <strong>Fix:</strong> Parse both platforms&rsquo; resolution sources and flag divergent criteria before execution. Block any match where resolution methodology, timeframe, or source differs. The $40M extracted from PM arbs historically includes losses from exactly this trap.</p>
+
+<p><strong>17. Replace single-writer/single-reader BookCache with concurrent-safe cache.</strong> The current &ldquo;single-writer (WS thread) + single-reader (main loop) only&rdquo; constraint blocks parallel scanner reads during execution and prevents the scanner parallelization from point 12. <strong>Fix:</strong> <code>threading.RLock</code> on the <code>_books</code> dict (multiple concurrent readers, exclusive writer), or a lock-free approach using <code>dict.copy()</code> snapshots. This is a prerequisite for points 11 and 12.</p>
+
+<p><strong>18. Replace the toy latency probability model with learned calibration.</strong> <code>compute_implied_probability()</code> uses <code>prob = 0.50 + momentum * 0.35</code> &mdash; a hardcoded linear mapping calibrated to one historical bot&rsquo;s results, with no regime detection, volatility adjustment, or order flow signals. <strong>Fix:</strong> Logistic regression or gradient-boosted classifier trained on historical 15-min market resolutions vs (volume-weighted momentum, ATR, time-to-expiry, bid-ask spread, recent trade velocity). Even a simple logistic model with 3 features would dramatically improve edge estimation and reduce false signals.</p>
+
+<p><strong>19. Extract run.py into a composable Pipeline &mdash; the 898-line God object blocks everything.</strong> The entire fetch&rarr;filter&rarr;scan&rarr;score&rarr;size&rarr;safety&rarr;execute&rarr;P&amp;L flow lives in one function with deep nesting. Every improvement (parallel scanners, event-driven triggers, maker mode) requires touching this monolith. <strong>Fix:</strong> Extract a <code>Pipeline</code> class with <code>FetchStage</code>, <code>ScanStage</code>, <code>ScoreStage</code>, <code>ExecuteStage</code> that can be composed, tested independently, and eventually run as event-driven coroutines instead of sequential steps.</p>
+
+<p><strong>20. Implement graduated unwind with retry escalation.</strong> <code>_unwind_partial()</code> uses single-attempt FOK market orders to exit stuck positions. In fast-moving markets, FOK fails when there&rsquo;s no resting liquidity at the required price &mdash; leaving the bot with naked exposure and no recovery path. <strong>Fix:</strong> Tiered unwind: (1) FOK at market, (2) GTC limit +1% slippage / 10s timeout, (3) GTC +5% slippage / 30s timeout, (4) alert operator + track in circuit breaker as open exposure, not just P&amp;L loss. The circuit breaker should also account for stuck-position risk, not only realized losses.</p>
+
+</body>
+</html>

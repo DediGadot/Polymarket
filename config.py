@@ -64,8 +64,9 @@ class Config(BaseSettings):
     max_legs_per_opportunity: int = 15  # skip opportunities with more legs (one batch max)
     book_fetch_workers: int = Field(default=8, ge=1, le=32)
 
-    # Volume pre-filter
+    # Pre-filters
     min_volume_filter: float = Field(default=0.0, ge=0)
+    min_hours_to_resolution: float = Field(default=1.0, ge=0)
 
     # Depth Sweep + Latency Arb (Iteration 3)
     target_size_usd: float = 100.0
@@ -84,13 +85,30 @@ class Config(BaseSettings):
     kalshi_private_key_path: str = ""
     kalshi_host: str = "https://trading-api.kalshi.com/trade-api/v2"
     kalshi_demo: bool = False
-    # Requires allow_non_polymarket_apis=true (uses Kalshi API).
-    cross_platform_enabled: bool = False
+    # Cross-platform arb enabled by default -- all configured platforms scanned.
+    cross_platform_enabled: bool = True
     cross_platform_min_confidence: float = 0.90
     cross_platform_manual_map: str = "cross_platform_map.json"
     kalshi_position_limit: float = 25000.0
     cross_platform_deadline_sec: float = 5.0
     cross_platform_verified_path: str = "verified_matches.json"
+
+    # Fanatics Markets (Iteration 6)
+    fanatics_api_key: str = ""
+    fanatics_api_secret: str = ""
+    fanatics_host: str = ""
+    fanatics_position_limit: float = 25000.0
+    fanatics_enabled: bool = False
+
+
+def active_platforms(cfg: Config) -> list[str]:
+    """Auto-detect external platforms with valid credentials."""
+    platforms: list[str] = []
+    if cfg.kalshi_api_key_id and cfg.kalshi_private_key_path:
+        platforms.append("kalshi")
+    if cfg.fanatics_api_key and cfg.fanatics_api_secret:
+        platforms.append("fanatics")
+    return platforms
 
 
 def load_config() -> Config:

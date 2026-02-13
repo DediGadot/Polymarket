@@ -52,6 +52,11 @@ def _kalshi_market(ticker: str, event_ticker: str, title: str) -> KalshiMarket:
     )
 
 
+def _wrap_kalshi(markets: list[KalshiMarket]) -> dict[str, list]:
+    """Wrap Kalshi markets into the platform_markets dict expected by match_events."""
+    return {"kalshi": markets}
+
+
 class TestManualMapping:
     def test_exact_match_from_file(self):
         """Manual map should produce confidence=1.0 match."""
@@ -67,7 +72,7 @@ class TestManualMapping:
             _kalshi_market("KALSHI-EVT-1-YES", "KALSHI-EVT-1", "Rain tomorrow?"),
         ]
 
-        matches = matcher.match_events(pm_events, kalshi_markets)
+        matches = matcher.match_events(pm_events, _wrap_kalshi(kalshi_markets))
         assert len(matches) == 1
         assert matches[0].confidence == 1.0
         assert matches[0].match_method == "manual"
@@ -85,7 +90,7 @@ class TestManualMapping:
         pm_events = [_pm_event("pm-evt-1", "Test event")]
         kalshi_markets = [_kalshi_market("OTHER-YES", "OTHER", "Other event")]
 
-        matches = matcher.match_events(pm_events, kalshi_markets)
+        matches = matcher.match_events(pm_events, _wrap_kalshi(kalshi_markets))
         # Should fall through to fuzzy matching (which may or may not match)
         for m in matches:
             assert m.match_method != "manual"
@@ -97,7 +102,7 @@ class TestManualMapping:
         kalshi_markets = [_kalshi_market("T1", "E1", "Different event")]
 
         # Should not crash
-        matches = matcher.match_events(pm_events, kalshi_markets)
+        matches = matcher.match_events(pm_events, _wrap_kalshi(kalshi_markets))
         # May or may not have fuzzy matches, but shouldn't crash
         assert isinstance(matches, list)
 
@@ -112,7 +117,7 @@ class TestFuzzyMatching:
             _kalshi_market("PRES-2028-T", "PRES-2028", "Donald Trump wins 2028 presidential election"),
         ]
 
-        matches = matcher.match_events(pm_events, kalshi_markets)
+        matches = matcher.match_events(pm_events, _wrap_kalshi(kalshi_markets))
         assert len(matches) == 1
         assert matches[0].match_method == "fuzzy"
         assert matches[0].confidence == 0.0  # Blocked: not verified
@@ -136,7 +141,7 @@ class TestFuzzyMatching:
             _kalshi_market("PRES-2028-T", "PRES-2028", "Donald Trump wins 2028 presidential election"),
         ]
 
-        matches = matcher.match_events(pm_events, kalshi_markets)
+        matches = matcher.match_events(pm_events, _wrap_kalshi(kalshi_markets))
         assert len(matches) == 1
         assert matches[0].match_method == "verified"
         assert matches[0].confidence > 0.85  # score/100, ~88.7% for these titles
@@ -160,7 +165,7 @@ class TestFuzzyMatching:
             _kalshi_market("B-1", "EVENT-B", "Will BTC be above 100k by end of 2026?"),
         ]
 
-        matches = matcher.match_events(pm_events, kalshi_markets)
+        matches = matcher.match_events(pm_events, _wrap_kalshi(kalshi_markets))
         assert len(matches) == 1
         assert matches[0].match_method == "verified"
         assert matches[0].kalshi_event_ticker == "EVENT-A"
@@ -175,7 +180,7 @@ class TestFuzzyMatching:
             _kalshi_market("BTC-100K", "BTC-PRICE", "Bitcoin above $100,000 by end of year"),
         ]
 
-        matches = matcher.match_events(pm_events, kalshi_markets)
+        matches = matcher.match_events(pm_events, _wrap_kalshi(kalshi_markets))
         assert len(matches) == 0
 
     def test_custom_threshold(self):
@@ -188,8 +193,8 @@ class TestFuzzyMatching:
             _kalshi_market("BIDEN-2028", "BIDEN", "Biden runs for president in 2028"),
         ]
 
-        matches_low = matcher_low.match_events(pm_events, kalshi_markets)
-        matches_high = matcher_high.match_events(pm_events, kalshi_markets)
+        matches_low = matcher_low.match_events(pm_events, _wrap_kalshi(kalshi_markets))
+        matches_high = matcher_high.match_events(pm_events, _wrap_kalshi(kalshi_markets))
 
         # Lower threshold should find more matches
         assert len(matches_low) >= len(matches_high)
@@ -263,7 +268,7 @@ class TestFuzzyMatchFiltering:
             _kalshi_market("PRES-2028", "PRES-2028", "Will Trump win the 2028 presidential election?"),
         ]
 
-        matches = matcher.match_events(pm_events, kalshi_markets)
+        matches = matcher.match_events(pm_events, _wrap_kalshi(kalshi_markets))
         assert len(matches) == 0
 
     def test_settlement_keyword_rejected(self):
@@ -278,7 +283,7 @@ class TestFuzzyMatchFiltering:
             _kalshi_market("PRES-2028-B", "PRES-2028", "Will Biden win 2028?"),
         ]
 
-        matches = matcher.match_events(pm_events, kalshi_markets)
+        matches = matcher.match_events(pm_events, _wrap_kalshi(kalshi_markets))
         assert len(matches) == 0
 
 
@@ -293,7 +298,7 @@ class TestMultipleMatches:
             _kalshi_market("PRES-T", "PRES-2028", "Trump wins 2028 election"),
         ]
 
-        matches = matcher.match_events(pm_events, kalshi_markets)
+        matches = matcher.match_events(pm_events, _wrap_kalshi(kalshi_markets))
         if matches:
             # Should match to PRES-2028, not RAIN
             assert matches[0].kalshi_event_ticker == "PRES-2028"
@@ -316,7 +321,7 @@ class TestMultipleMatches:
             _kalshi_market("K-E2-YES", "K-E2", "Will something happen on Kalshi?"),
         ]
 
-        matches = matcher.match_events(pm_events, kalshi_markets)
+        matches = matcher.match_events(pm_events, _wrap_kalshi(kalshi_markets))
         assert len(matches) == 2
 
 
@@ -336,7 +341,7 @@ class TestMatchedEventDataclass:
             _kalshi_market("K-E1-B", "K-E1", "Test B"),
         ]
 
-        matches = matcher.match_events(pm_events, kalshi_markets)
+        matches = matcher.match_events(pm_events, _wrap_kalshi(kalshi_markets))
         assert len(matches) == 1
         assert set(matches[0].kalshi_tickers) == {"K-E1-A", "K-E1-B"}
 
@@ -360,7 +365,7 @@ class TestSortedByConfidence:
             _kalshi_market("PRES-T", "PRES-2028", "Trump wins 2028 presidential election"),
         ]
 
-        matches = matcher.match_events(pm_events, kalshi_markets)
+        matches = matcher.match_events(pm_events, _wrap_kalshi(kalshi_markets))
         if len(matches) >= 2:
             # Manual (confidence=1.0) should come first
             assert matches[0].confidence >= matches[1].confidence

@@ -53,6 +53,45 @@ def _make_negrisk_opp():
     )
 
 
+def _make_binary_sell_opp():
+    return Opportunity(
+        type=OpportunityType.BINARY_REBALANCE,
+        event_id="e1",
+        legs=(
+            LegOrder("y1", Side.SELL, 0.56, 100),
+            LegOrder("n1", Side.SELL, 0.56, 100),
+        ),
+        expected_profit_per_set=0.12,
+        net_profit_per_set=0.12,
+        max_sets=100,
+        gross_profit=12.0,
+        estimated_gas_cost=0.01,
+        net_profit=11.99,
+        roi_pct=12.0,
+        required_capital=100.0,
+    )
+
+
+def _make_negrisk_sell_opp():
+    return Opportunity(
+        type=OpportunityType.NEGRISK_REBALANCE,
+        event_id="e1",
+        legs=(
+            LegOrder("y1", Side.SELL, 0.36, 100),
+            LegOrder("y2", Side.SELL, 0.36, 100),
+            LegOrder("y3", Side.SELL, 0.36, 100),
+        ),
+        expected_profit_per_set=0.08,
+        net_profit_per_set=0.08,
+        max_sets=100,
+        gross_profit=8.0,
+        estimated_gas_cost=0.01,
+        net_profit=7.99,
+        roi_pct=8.0,
+        required_capital=100.0,
+    )
+
+
 class TestPaperExecute:
     def test_paper_binary(self):
         opp = _make_binary_opp()
@@ -147,6 +186,23 @@ class TestExecuteBinary:
         assert calls[0].kwargs["price"] == 0.45
         assert calls[0].kwargs["size"] == 50.0
 
+    @patch("executor.engine.post_orders")
+    @patch("executor.engine.create_limit_order")
+    def test_sell_side_full_fill_has_positive_pnl(self, mock_create, mock_post):
+        mock_create.return_value = MagicMock()
+        mock_post.return_value = [
+            {"orderID": "o1", "status": "matched"},
+            {"orderID": "o2", "status": "matched"},
+        ]
+
+        opp = _make_binary_sell_opp()
+        result = execute_opportunity(MagicMock(), opp, size=10.0, paper_trading=False)
+
+        expected = ((0.56 + 0.56) - 1.0) * 10.0 - opp.estimated_gas_cost
+        assert result.fully_filled is True
+        assert result.net_pnl == pytest.approx(expected)
+        assert result.net_pnl > 0
+
 
 class TestExecuteNegRisk:
     @patch("executor.engine.post_orders")
@@ -201,6 +257,24 @@ class TestExecuteNegRisk:
         assert len(result.order_ids) == 20
         assert result.fully_filled is True
 
+    @patch("executor.engine.post_orders")
+    @patch("executor.engine.create_limit_order")
+    def test_sell_side_full_fill_has_positive_pnl(self, mock_create, mock_post):
+        mock_create.return_value = MagicMock()
+        mock_post.return_value = [
+            {"orderID": "o1", "status": "matched"},
+            {"orderID": "o2", "status": "matched"},
+            {"orderID": "o3", "status": "matched"},
+        ]
+
+        opp = _make_negrisk_sell_opp()
+        result = execute_opportunity(MagicMock(), opp, size=10.0, paper_trading=False)
+
+        expected = ((0.36 + 0.36 + 0.36) - 1.0) * 10.0 - opp.estimated_gas_cost
+        assert result.fully_filled is True
+        assert result.net_pnl == pytest.approx(expected)
+        assert result.net_pnl > 0
+
 
 class TestExecutionSafety:
     @patch("executor.engine.time.sleep")
@@ -248,6 +322,25 @@ class TestExecutionSafety:
         )
 
         assert mock_create_market_order.call_args.kwargs["neg_risk"] is False
+
+    @patch("executor.engine.post_order")
+    @patch("executor.engine.create_market_order")
+    def test_sell_leg_unwind_buy_uses_dollar_notional(self, mock_create_market_order, mock_post_order):
+        """BUY market unwind after a sell fill should convert shares -> dollar notional."""
+        mock_create_market_order.return_value = MagicMock()
+        mock_post_order.return_value = {"status": "filled"}
+
+        _unwind_partial(
+            MagicMock(),
+            order_ids=["o1"],
+            legs=(LegOrder("y1", Side.SELL, 0.42, 100),),
+            fill_sizes=[10.0],
+            neg_risk=False,
+        )
+
+        kwargs = mock_create_market_order.call_args.kwargs
+        assert kwargs["side"] == Side.BUY
+        assert kwargs["amount"] == pytest.approx(4.2)
 
 
 class TestExecuteSingleLeg:
