@@ -39,6 +39,31 @@ def sweep_cost(book: OrderBook, side: Side, target_size: float) -> float:
     return total_cost
 
 
+def slippage_ceiling(
+    base_price: float,
+    edge_pct: float,
+    side: Side,
+    slippage_fraction: float = 0.4,
+    max_slippage_pct: float = 3.0,
+) -> float:
+    """
+    Compute a price ceiling (for BUY) or floor (for SELL) proportional to
+    the arb edge. Wider edges tolerate more slippage, thin edges stay tight.
+
+    For BUY side: returns max acceptable ask price.
+    For SELL side: returns min acceptable bid price.
+
+    slippage_fraction: fraction of edge to allow as slippage (0.4 = 40%).
+    max_slippage_pct: hard cap on slippage percentage.
+    """
+    allowed_slip_pct = min(abs(edge_pct) * slippage_fraction, max_slippage_pct)
+    slip_ratio = allowed_slip_pct / 100.0
+    if side == Side.BUY:
+        return base_price * (1.0 + slip_ratio)
+    else:
+        return base_price * (1.0 - slip_ratio)
+
+
 def sweep_depth(book: OrderBook, side: Side, max_price: float) -> float:
     """
     Total available size up to price ceiling (for BUY) or floor (for SELL).

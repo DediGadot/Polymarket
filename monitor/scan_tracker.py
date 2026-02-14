@@ -1,11 +1,15 @@
 """
 Scan-only summary tracker. Accumulates opportunities across cycles
 and produces an aggregate summary on shutdown.
+
+Memory-bounded: opportunities list is capped to prevent unbounded growth
+in long-running sessions. Default max 100 cycles worth of opportunities.
 """
 
 from __future__ import annotations
 
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 from scanner.models import Opportunity
@@ -20,6 +24,8 @@ class ScanTracker:
     opportunities: list[Opportunity] = field(default_factory=list)
     unique_event_ids: set[str] = field(default_factory=set)
     _session_start: float = field(default_factory=time.time)
+    # Memory cap: max opportunities to retain (prevents unbounded growth)
+    max_opportunities: int = 100
 
     def record_cycle(
         self, cycle: int, n_markets: int, opportunities: list[Opportunity]
@@ -30,6 +36,11 @@ class ScanTracker:
         self.opportunities.extend(opportunities)
         for opp in opportunities:
             self.unique_event_ids.add(opp.event_id)
+
+        # Trim to max_opportunities to prevent memory leak
+        if len(self.opportunities) > self.max_opportunities:
+            # Keep only the most recent opportunities
+            self.opportunities = self.opportunities[-self.max_opportunities:]
 
     def summary(self) -> dict:
         """Return aggregate summary dict, consistent with PnLTracker.summary() pattern."""

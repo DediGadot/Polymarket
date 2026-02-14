@@ -164,6 +164,46 @@ class TestGetOrderbook:
         assert len(books) == 1
         assert "GOOD" in books
 
+    @respx.mock
+    def test_get_orderbooks_parallel_same_results(self):
+        """Parallel get_orderbooks should return same results as sequential."""
+        auth = _mock_auth()
+        client = KalshiClient(auth, host="https://test.kalshi.com/trade-api/v2")
+
+        # Mock responses for 3 tickers
+        for i in range(3):
+            ticker = f"M{i}"
+            respx.get(f"https://test.kalshi.com/trade-api/v2/markets/{ticker}/orderbook").mock(
+                return_value=httpx.Response(200, json={
+                    "orderbook": {"yes": [[50 + i, 100]], "no": [[50 - i, 100]]},
+                })
+            )
+
+        tickers = ["M0", "M1", "M2"]
+        # Sequential fetch (default max_workers=4)
+        books_parallel = client.get_orderbooks(tickers, max_workers=4)
+        books_sequential = client.get_orderbooks(tickers, max_workers=1)
+
+        assert len(books_parallel) == 3
+        assert len(books_sequential) == 3
+
+        # Same results
+        for ticker in tickers:
+            assert ticker in books_parallel
+            assert ticker in books_sequential
+            # Same orderbook data
+            assert books_parallel[ticker].bids == books_sequential[ticker].bids
+            assert books_parallel[ticker].asks == books_sequential[ticker].asks
+
+    @respx.mock
+    def test_get_orderbooks_empty_list(self):
+        """Empty tickers list should return empty dict."""
+        auth = _mock_auth()
+        client = KalshiClient(auth, host="https://test.kalshi.com/trade-api/v2")
+
+        books = client.get_orderbooks([])
+        assert books == {}
+
 
 class TestBookFetcher:
     @respx.mock

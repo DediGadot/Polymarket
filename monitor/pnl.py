@@ -118,6 +118,14 @@ class PnLTracker:
     def session_duration_sec(self) -> float:
         return time.time() - self._session_start
 
+    def reduce_exposure(self, amount: float) -> None:
+        """
+        Reduce current exposure by the given amount.
+        Used when positions are sold, unwound, or resolved.
+        Exposure is floored at 0 (never goes negative).
+        """
+        self.current_exposure = max(0.0, self.current_exposure - amount)
+
     def summary(self) -> dict:
         """Return a summary dict of current P&L state."""
         return {

@@ -136,6 +136,50 @@ class TestSpikeDetector:
         d = SpikeDetector()
         assert d.get_velocity("unknown") is None
 
+    def test_cleanup_stale_removes_old_tokens(self):
+        """cleanup_stale() should remove tokens not in active_tokens set."""
+        d = SpikeDetector()
+        d.register_token("tok1", "evt1")
+        d.register_token("tok2", "evt1")
+        d.register_token("tok3", "evt1")
+
+        # Add price history for all tokens
+        base = time.time()
+        d.update("tok1", 0.50, base)
+        d.update("tok2", 0.55, base)
+        d.update("tok3", 0.60, base)
+
+        # All tokens should have history
+        assert len(d._histories) == 3
+        assert len(d._token_events) == 3
+
+        # cleanup with only tok1, tok2 active (tok3 stale)
+        active_tokens = {"tok1", "tok2"}
+        d.cleanup_stale(active_tokens)
+
+        # tok3 should be removed
+        assert len(d._histories) == 2
+        assert "tok1" in d._histories
+        assert "tok2" in d._histories
+        assert "tok3" not in d._histories
+        assert len(d._token_events) == 2
+
+    def test_cleanup_stale_preserves_active(self):
+        """cleanup_stale() should preserve all active tokens."""
+        d = SpikeDetector()
+        for i in range(5):
+            d.register_token(f"tok{i}", "evt1")
+            d.update(f"tok{i}", 0.50, time.time())
+
+        assert len(d._histories) == 5
+
+        # All tokens are active
+        active_tokens = {f"tok{i}" for i in range(5)}
+        d.cleanup_stale(active_tokens)
+
+        # All should remain
+        assert len(d._histories) == 5
+
 
 class TestScanSpikeOpportunities:
     def test_detects_lag_arb(self):

@@ -487,8 +487,8 @@ class TestKellySizingArithmetic:
         size = compute_position_size(
             opp,
             bankroll=5000.0,
-            max_exposure_per_trade=500.0,
-            max_total_exposure=5000.0,
+            max_exposure_per_trade=5000.0,
+            max_total_exposure=50000.0,
             current_exposure=0.0,
         )
 

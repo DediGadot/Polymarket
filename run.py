@@ -24,6 +24,7 @@ import logging
 import signal
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 
 from config import load_config, Config, active_platforms
@@ -31,8 +32,10 @@ from functools import partial
 
 from client.auth import build_clob_client
 from client.clob import cancel_all, get_orderbooks, get_orderbooks_parallel
-from client.gamma import get_all_markets, build_events, get_event_market_counts
+from client.gamma import build_events
+from client.cache import GammaClient
 from client.gas import GasOracle
+from client.platform import PlatformClient
 from scanner.binary import scan_binary_markets
 from scanner.negrisk import scan_negrisk_events
 from scanner.book_cache import BookCache
@@ -61,6 +64,7 @@ from executor.safety import (
     verify_edge_intact,
     verify_inventory,
     verify_cross_platform_books,
+    verify_platform_limits,
 )
 from client.data import PositionTracker
 from client.ws_bridge import WSBridge
@@ -68,6 +72,7 @@ from executor.engine import execute_opportunity, UnwindFailed
 from executor.cross_platform import CrossPlatformUnwindFailed
 from monitor.pnl import PnLTracker
 from monitor.scan_tracker import ScanTracker
+from scanner.confidence import ArbTracker
 from monitor.status import StatusWriter
 from monitor.logger import setup_logging
 from monitor.display import print_startup, print_cycle_header, print_scan_result, print_cycle_error, print_cycle_footer
@@ -105,27 +110,34 @@ def _mode_label(args: argparse.Namespace, cfg: Config) -> str:
     return "LIVE TRADING"
 
 
-def _enforce_polymarket_only_mode(cfg: Config) -> None:
+def _enforce_polymarket_only_mode(cfg: Config) -> Config:
     """
     Disable strategies/integrations that require non-Polymarket APIs unless
     explicitly opted in via config.
+
+    Returns a new Config with appropriate flags disabled (immutable).
     """
     if cfg.allow_non_polymarket_apis:
-        return
+        return cfg
 
+    updates = {}
     if cfg.latency_enabled:
         logger.warning(
             "LATENCY_ENABLED=true ignored because ALLOW_NON_POLYMARKET_APIS=false "
             "(Binance spot feed is external)."
         )
-        cfg.latency_enabled = False
+        updates["latency_enabled"] = False
 
     if cfg.cross_platform_enabled:
         logger.warning(
             "CROSS_PLATFORM_ENABLED=true ignored because ALLOW_NON_POLYMARKET_APIS=false "
             "(Kalshi API is external)."
         )
-        cfg.cross_platform_enabled = False
+        updates["cross_platform_enabled"] = False
+
+    if updates:
+        return cfg.model_copy(update=updates)
+    return cfg
 
 
 def _format_duration(seconds: float) -> str:
@@ -192,11 +204,11 @@ def main() -> None:
 
     # Override paper trading based on CLI flag
     if args.live:
-        cfg.paper_trading = False
+        cfg = cfg.model_copy(update={"paper_trading": False})
     if args.dry_run:
         args.scan_only = True  # dry-run implies scan-only
 
-    _enforce_polymarket_only_mode(cfg)
+    cfg = _enforce_polymarket_only_mode(cfg)
 
     # Validate credentials for non-dry-run modes
     if not args.dry_run and (not cfg.private_key or not cfg.polymarket_profile_address):
@@ -237,6 +249,8 @@ def main() -> None:
         default_gas_gwei=cfg.gas_price_gwei,
         allow_network=cfg.allow_non_polymarket_apis,
     )
+    gamma_client = GammaClient(gamma_host=cfg.gamma_host)
+    logger.debug("Gamma client initialized with caching (host=%s)", cfg.gamma_host)
     fee_model = MarketFeeModel(enabled=cfg.fee_model_enabled)
     latency_scanner = LatencyScanner(
         min_edge_pct=cfg.latency_min_edge_pct,
@@ -265,8 +279,12 @@ def main() -> None:
                  cfg.spike_threshold_pct, cfg.spike_window_sec, cfg.spike_cooldown_sec)
     logger.debug("Strategy selector initialized (adaptive mode)")
 
+    # ArbTracker for persistent arb confidence scoring
+    arb_tracker = ArbTracker()
+    logger.debug("ArbTracker initialized for persistence confidence")
+
     # Cross-platform initialization: build platform registry from credentials
-    platform_clients: dict[str, object] = {}
+    platform_clients: dict[str, PlatformClient] = {}
     platform_fee_models: dict[str, PlatformFeeModel] = {}
     event_matcher = None
 
@@ -377,10 +395,10 @@ def main() -> None:
         try:
             print_cycle_header(cycle)
 
-            # Step 1: Fetch active markets
+            # Step 1: Fetch active markets (with caching)
             fetch_start = time.time()
             logger.debug("[1/3] Fetching active markets from Gamma API...")
-            all_markets = get_all_markets(cfg.gamma_host)
+            all_markets = gamma_client.get_markets()
             if args.limit > 0:
                 # Never truncate negRisk markets -- they require complete outcome
                 # sets. Truncating splits multi-outcome events and causes false
@@ -449,24 +467,33 @@ def main() -> None:
             poly_rest_fetcher = partial(get_orderbooks_parallel, client, max_workers=cfg.book_fetch_workers)
             poly_book_fetcher = book_cache.make_caching_fetcher(poly_rest_fetcher)
 
+            # Parallelize independent scanners (binary + negrisk) using ThreadPoolExecutor
+            # These scanners have no dependencies on each other and can run concurrently
             binary_opps: list[Opportunity] = []
-            if scan_params.binary_enabled:
+            negrisk_opps: list[Opportunity] = []
+
+            def _run_binary_scan() -> list[Opportunity]:
+                if not scan_params.binary_enabled:
+                    return []
                 logger.debug("      Scanning %s binary markets...", f"{len(binary_markets):,}")
-                binary_opps = scan_binary_markets(
+                return scan_binary_markets(
                     poly_book_fetcher, binary_markets,
                     scan_params.min_profit_usd, scan_params.min_roi_pct,
                     cfg.gas_per_order, cfg.gas_price_gwei,
                     gas_oracle=gas_oracle, fee_model=fee_model, book_cache=book_cache,
                     min_volume=cfg.min_volume_filter,
+                    slippage_fraction=cfg.slippage_fraction,
+                    max_slippage_pct=cfg.max_slippage_pct,
                 )
 
-            negrisk_opps: list[Opportunity] = []
-            if scan_params.negrisk_enabled:
+            def _run_negrisk_scan() -> list[Opportunity]:
+                if not scan_params.negrisk_enabled:
+                    return []
                 logger.debug("      Scanning %d negRisk events...", len(negrisk_events))
-                # Fetch expected market counts for event completeness validation.
+                # Fetch expected market counts for event completeness validation (with caching).
                 # This prevents false arbs from incomplete outcome sets.
-                event_market_counts = get_event_market_counts(cfg.gamma_host)
-                negrisk_opps = scan_negrisk_events(
+                event_market_counts = gamma_client.get_event_market_counts()
+                return scan_negrisk_events(
                     poly_book_fetcher, negrisk_events,
                     scan_params.min_profit_usd, scan_params.min_roi_pct,
                     cfg.gas_per_order, cfg.gas_price_gwei,
@@ -474,123 +501,306 @@ def main() -> None:
                     min_volume=cfg.min_volume_filter,
                     max_legs=cfg.max_legs_per_opportunity,
                     event_market_counts=event_market_counts,
+                    slippage_fraction=cfg.slippage_fraction,
+                    max_slippage_pct=cfg.max_slippage_pct,
                 )
 
-            # Latency arb on 15-min crypto markets
-            latency_opps: list[Opportunity] = []
-            if latency_scanner and scan_params.latency_enabled:
-                crypto_markets = latency_scanner.identify_crypto_markets(all_markets)
-                has_crypto_momentum = bool(crypto_markets)
-                if crypto_markets:
-                    logger.debug("      Scanning %d crypto 15-min markets for latency arb...", len(crypto_markets))
-                    # Fetch spot prices
-                    symbols_seen: set[str] = set()
-                    for _, sym, _ in crypto_markets:
-                        if sym not in symbols_seen:
-                            latency_scanner.get_spot_price(sym)
-                            symbols_seen.add(sym)
-                    # Fetch books for crypto markets (YES + NO tokens)
-                    crypto_token_ids = [m.yes_token_id for m, _, _ in crypto_markets]
-                    crypto_no_token_ids = [m.no_token_id for m, _, _ in crypto_markets]
-                    crypto_books = get_orderbooks(client, crypto_token_ids)
-                    crypto_no_books = get_orderbooks(client, crypto_no_token_ids)
-                    book_cache.store_books(crypto_books)
-                    book_cache.store_books(crypto_no_books)
-                    gas_cost = gas_oracle.estimate_cost_usd(1, cfg.gas_per_order)
-                    latency_opps = scan_latency_markets(
-                        latency_scanner, crypto_markets, crypto_books, gas_cost,
-                        no_books=crypto_no_books,
-                    )
-            else:
-                has_crypto_momentum = False
-
-            # Spike detection: update histories and check for lag arbs
-            spike_opps: list[Opportunity] = []
-            if scan_params.spike_enabled:
-                # Feed current midpoints into spike detector
-                for m in all_markets:
-                    book = book_cache.get_book(m.yes_token_id)
-                    if book and book.midpoint is not None:
-                        spike_detector.register_token(m.yes_token_id, m.event_id)
-                        spike_detector.update(m.yes_token_id, book.midpoint)
-                spikes = spike_detector.detect_spikes()
-                if spikes:
-                    logger.debug("      Detected %d price spikes, checking siblings...", len(spikes))
-                    # Build event lookup
-                    event_map = {e.event_id: e for e in events}
-                    gas_cost = gas_oracle.estimate_cost_usd(1, cfg.gas_per_order)
-                    for spike in spikes:
-                        ev = event_map.get(spike.event_id)
-                        if ev:
-                            spike_opps.extend(scan_spike_opportunities(
-                                spike, ev, book_cache, fee_model,
-                                gas_cost_usd=gas_cost,
-                                min_profit_usd=scan_params.min_profit_usd,
-                            ))
-
-            # Cross-platform arbitrage (Polymarket vs external platforms)
-            cross_platform_opps: list[Opportunity] = []
-            if cfg.cross_platform_enabled and platform_clients and event_matcher:
-                logger.debug("      Scanning cross-platform arbitrage (%s)...", ", ".join(platform_clients.keys()))
-
-                # Fetch markets from all platforms (gracefully skip NotImplementedError)
-                all_platform_markets: dict[str, list] = {}
-                for pname, pclient in platform_clients.items():
-                    try:
-                        mkts = pclient.get_all_markets(status="open")
-                        all_platform_markets[pname] = mkts
-                        logger.debug("      Fetched %d active %s markets", len(mkts), pname)
-                    except NotImplementedError:
-                        logger.debug("      Skipping %s (API not yet available)", pname)
-                    except Exception as e:
-                        logger.warning("      Failed to fetch %s markets: %s", pname, e)
-
-                if all_platform_markets:
-                    # Match events across platforms
-                    matched_events = event_matcher.match_events(events, all_platform_markets)
-                    logger.debug("      Matched %d events across platforms", len(matched_events))
-
-                    if matched_events:
-                        # Collect all token IDs needed from PM and each platform
-                        pm_token_ids: list[str] = []
-                        platform_tickers: dict[str, list[str]] = {}
-                        for match in matched_events:
-                            for pm_mkt in match.pm_markets:
-                                pm_token_ids.append(pm_mkt.yes_token_id)
-                                pm_token_ids.append(pm_mkt.no_token_id)
-                            for pm in match.platform_matches:
-                                platform_tickers.setdefault(pm.platform, []).extend(pm.tickers)
-
-                        # Fetch orderbooks from PM and each platform
-                        pm_cross_books = poly_book_fetcher(pm_token_ids) if pm_token_ids else {}
-                        book_cache.store_books(pm_cross_books)
-
-                        all_platform_books: dict[str, dict] = {}
-                        for pname, tickers in platform_tickers.items():
-                            pclient = platform_clients.get(pname)
-                            if pclient and tickers:
-                                try:
-                                    all_platform_books[pname] = pclient.get_orderbooks(tickers)
-                                except NotImplementedError:
-                                    logger.debug("      Skipping %s orderbooks (API not available)", pname)
-                                except Exception as e:
-                                    logger.warning("      Failed to fetch %s orderbooks: %s", pname, e)
-
-                        cross_platform_opps = scan_cross_platform(
-                            matched_events, pm_cross_books,
-                            platform_books=all_platform_books,
-                            min_profit_usd=scan_params.min_profit_usd,
-                            min_roi_pct=scan_params.min_roi_pct,
-                            gas_per_order=cfg.gas_per_order,
-                            gas_oracle=gas_oracle,
-                            pm_fee_model=fee_model,
-                            platform_fee_models=platform_fee_models,
-                            min_confidence=cfg.cross_platform_min_confidence,
+            # Define scanner functions for parallel execution
+            def _run_latency_scan() -> tuple[list[Opportunity], bool]:
+                """Run latency arb scanner. Returns (opportunities, has_crypto_momentum)."""
+                from scanner.latency import scan_latency_markets
+                opps: list[Opportunity] = []
+                has_momentum = False
+                if latency_scanner:
+                    crypto_markets = latency_scanner.identify_crypto_markets(all_markets)
+                    has_momentum = bool(crypto_markets)
+                    if crypto_markets:
+                        logger.debug("      Scanning %d crypto 15-min markets for latency arb...", len(crypto_markets))
+                        # Fetch spot prices
+                        symbols_seen: set[str] = set()
+                        for _, sym, _ in crypto_markets:
+                            if sym not in symbols_seen:
+                                latency_scanner.get_spot_price(sym)
+                                symbols_seen.add(sym)
+                        # Fetch books for crypto markets (YES + NO tokens)
+                        crypto_token_ids = [m.yes_token_id for m, _, _ in crypto_markets]
+                        crypto_no_token_ids = [m.no_token_id for m, _, _ in crypto_markets]
+                        crypto_books = get_orderbooks(client, crypto_token_ids)
+                        crypto_no_books = get_orderbooks(client, crypto_no_token_ids)
+                        book_cache.store_books(crypto_books)
+                        book_cache.store_books(crypto_no_books)
+                        gas_cost = gas_oracle.estimate_cost_usd(1, cfg.gas_per_order)
+                        opps = scan_latency_markets(
+                            latency_scanner, crypto_markets, crypto_books, gas_cost,
+                            no_books=crypto_no_books,
                         )
-                        if cross_platform_opps:
-                            logger.debug("      Found %d cross-platform opportunities", len(cross_platform_opps))
+                return opps, has_momentum
 
-            all_opps = binary_opps + negrisk_opps + latency_opps + spike_opps + cross_platform_opps
+            def _run_spike_scan() -> list[Opportunity]:
+                    """Run spike detection scanner. Returns opportunities list."""
+                    from scanner.spike import scan_spike_opportunities
+                    opps: list[Opportunity] = []
+                    # Feed current midpoints into spike detector
+                    for m in all_markets:
+                        book = book_cache.get_book(m.yes_token_id)
+                        if book and book.midpoint is not None:
+                            spike_detector.register_token(m.yes_token_id, m.event_id)
+                            spike_detector.update(m.yes_token_id, book.midpoint)
+                    spikes = spike_detector.detect_spikes()
+                    if spikes:
+                        logger.debug("      Detected %d price spikes, checking siblings...", len(spikes))
+                        # Build event lookup
+                        event_map = {e.event_id: e for e in events}
+                        gas_cost = gas_oracle.estimate_cost_usd(1, cfg.gas_per_order)
+                        for spike in spikes:
+                            ev = event_map.get(spike.event_id)
+                            if ev:
+                                opps.extend(scan_spike_opportunities(
+                                    spike, ev, book_cache, fee_model,
+                                    gas_cost_usd=gas_cost,
+                                    min_profit_usd=scan_params.min_profit_usd,
+                                ))
+                    return opps
+
+            def _run_cross_platform_scan() -> list[Opportunity]:
+                    """Run cross-platform arbitrage scanner. Returns opportunities list."""
+                    from scanner.cross_platform import scan_cross_platform
+                    opps: list[Opportunity] = []
+                    if cfg.cross_platform_enabled and platform_clients and event_matcher:
+                        logger.debug("      Scanning cross-platform arbitrage (%s)...", ", ".join(platform_clients.keys()))
+
+                        # Fetch markets from all platforms (gracefully skip NotImplementedError)
+                        all_platform_markets: dict[str, list] = {}
+                        for pname, pclient in platform_clients.items():
+                            try:
+                                mkts = pclient.get_all_markets(status="open")
+                                all_platform_markets[pname] = mkts
+                                logger.debug("      Fetched %d active %s markets", len(mkts), pname)
+                            except NotImplementedError:
+                                logger.debug("      Skipping %s (API not yet available)", pname)
+                            except Exception as e:
+                                logger.warning("      Failed to fetch %s markets: %s", pname, e)
+
+                        if all_platform_markets:
+                            # Match events across platforms
+                            matched_events = event_matcher.match_events(events, all_platform_markets)
+                            logger.debug("      Matched %d events across platforms", len(matched_events))
+
+                            if matched_events:
+                                # Collect all token IDs needed from PM and each platform
+                                pm_token_ids: list[str] = []
+                                platform_tickers: dict[str, list[str]] = {}
+                                for match in matched_events:
+                                    for pm_mkt in match.pm_markets:
+                                        pm_token_ids.append(pm_mkt.yes_token_id)
+                                        pm_token_ids.append(pm_mkt.no_token_id)
+                                    for pm in match.platform_matches:
+                                        platform_tickers.setdefault(pm.platform, []).extend(pm.tickers)
+
+                                # Fetch orderbooks from PM and each platform in parallel
+                                pm_cross_books = poly_book_fetcher(pm_token_ids) if pm_token_ids else {}
+                                book_cache.store_books(pm_cross_books)
+
+                                all_platform_books: dict[str, dict] = {}
+                                # Parallelize platform orderbook fetching
+                                with ThreadPoolExecutor(max_workers=len(platform_tickers) or 1) as executor:
+                                    def _fetch_platform_books(pname: str) -> tuple[str, dict] | None:
+                                        pclient = platform_clients.get(pname)
+                                        tickers = platform_tickers.get(pname, [])
+                                        if pclient and tickers:
+                                            try:
+                                                return pname, pclient.get_orderbooks(tickers, max_workers=4)
+                                            except NotImplementedError:
+                                                logger.debug("      Skipping %s orderbooks (API not available)", pname)
+                                            except Exception as e:
+                                                logger.warning("      Failed to fetch %s orderbooks: %s", pname, e)
+                                        return None
+
+                                    futures = {executor.submit(_fetch_platform_books, pname): pname
+                                               for pname in platform_tickers.keys()}
+                                    for future in as_completed(futures):
+                                        result = future.result()
+                                        if result:
+                                            pname, books = result
+                                            all_platform_books[pname] = books
+
+                                opps = scan_cross_platform(
+                                    matched_events, pm_cross_books,
+                                    platform_books=all_platform_books,
+                                    min_profit_usd=scan_params.min_profit_usd,
+                                    min_roi_pct=scan_params.min_roi_pct,
+                                    gas_per_order=cfg.gas_per_order,
+                                    gas_oracle=gas_oracle,
+                                    pm_fee_model=fee_model,
+                                    platform_fee_models=platform_fee_models,
+                                    min_confidence=cfg.cross_platform_min_confidence,
+                                )
+                                if opps:
+                                    logger.debug("      Found %d cross-platform opportunities", len(opps))
+                    return opps
+
+            def _run_value_scan() -> list[Opportunity]:
+                """Run partial negrisk value scanner."""
+                from scanner.value import scan_value_opportunities
+                if not cfg.value_scanner_enabled:
+                    return []
+                logger.debug("      Scanning negrisk events for value opportunities...")
+                return scan_value_opportunities(
+                    poly_book_fetcher, negrisk_events,
+                    scan_params.min_profit_usd, scan_params.min_roi_pct,
+                    cfg.gas_per_order, cfg.gas_price_gwei,
+                    gas_oracle=gas_oracle, fee_model=fee_model, book_cache=book_cache,
+                    min_volume=cfg.min_volume_filter,
+                    min_edge_pct=cfg.value_min_edge_pct,
+                )
+
+            def _run_maker_scan() -> list[Opportunity]:
+                """Run maker spread capture scanner on binary markets."""
+                from scanner.maker import scan_maker_opportunities
+                if not scan_params.binary_enabled:
+                    return []
+                logger.debug("      Scanning %s binary markets for maker spreads...", f"{len(binary_markets):,}")
+                # Use cached books where available
+                token_ids = []
+                for m in binary_markets:
+                    if not m.neg_risk:
+                        token_ids.append(m.yes_token_id)
+                        token_ids.append(m.no_token_id)
+                books = poly_book_fetcher(token_ids) if token_ids else {}
+                gas_cost = gas_oracle.estimate_cost_usd(1, cfg.gas_per_order) if gas_oracle else 0.005
+                return scan_maker_opportunities(
+                    binary_markets, books,
+                    fee_model=fee_model,
+                    min_edge_usd=scan_params.min_profit_usd,
+                    gas_cost_per_order=gas_cost,
+                    min_leg_price=cfg.maker_min_leg_price,
+                    min_depth_sets=cfg.maker_min_depth_sets,
+                )
+
+            def _run_resolution_scan() -> list[Opportunity]:
+                """Run resolution sniping scanner."""
+                from scanner.resolution import scan_resolution_opportunities
+                from scanner.outcome_oracle import OutcomeOracle
+                if not cfg.resolution_sniping_enabled:
+                    return []
+                logger.debug("      Scanning for resolution sniping opportunities...")
+                oracle = OutcomeOracle(allow_network=cfg.allow_non_polymarket_apis)
+                # Fetch books for all binary markets
+                token_ids = []
+                for m in binary_markets:
+                    token_ids.append(m.yes_token_id)
+                    token_ids.append(m.no_token_id)
+                books = poly_book_fetcher(token_ids) if token_ids else {}
+                gas_cost = gas_oracle.estimate_cost_usd(1, cfg.gas_per_order) if gas_oracle else 0.005
+                return scan_resolution_opportunities(
+                    binary_markets, books, oracle.check_outcome,
+                    fee_model=fee_model,
+                    max_minutes_to_resolution=cfg.resolution_max_minutes,
+                    min_edge_pct=cfg.resolution_min_edge_pct,
+                    gas_cost_per_order=gas_cost,
+                )
+
+            # Run all scanners in parallel
+            binary_opps: list[Opportunity] = []
+            negrisk_opps: list[Opportunity] = []
+            latency_opps: list[Opportunity] = []
+            spike_opps: list[Opportunity] = []
+            cross_platform_opps: list[Opportunity] = []
+            value_opps: list[Opportunity] = []
+            maker_opps: list[Opportunity] = []
+            resolution_opps: list[Opportunity] = []
+            has_crypto_momentum = False
+
+            # Build list of enabled scanners
+            scanner_futures = {}
+            with ThreadPoolExecutor(max_workers=9) as executor:
+                # Submit enabled scanners
+                if scan_params.binary_enabled:
+                    scanner_futures[executor.submit(_run_binary_scan)] = "binary"
+                if scan_params.negrisk_enabled:
+                    scanner_futures[executor.submit(_run_negrisk_scan)] = "negrisk"
+                if scan_params.latency_enabled:
+                    scanner_futures[executor.submit(_run_latency_scan)] = "latency"
+                if scan_params.spike_enabled:
+                    scanner_futures[executor.submit(_run_spike_scan)] = "spike"
+                if cfg.cross_platform_enabled and platform_clients and event_matcher:
+                    scanner_futures[executor.submit(_run_cross_platform_scan)] = "cross_platform"
+                if cfg.value_scanner_enabled:
+                    scanner_futures[executor.submit(_run_value_scan)] = "value"
+                if scan_params.binary_enabled:
+                    scanner_futures[executor.submit(_run_maker_scan)] = "maker"
+                if cfg.resolution_sniping_enabled:
+                    scanner_futures[executor.submit(_run_resolution_scan)] = "resolution"
+
+                # Collect results as they complete
+                for future in as_completed(scanner_futures):
+                    scanner_type = scanner_futures[future]
+                    try:
+                        result = future.result()
+                        if scanner_type == "binary":
+                            binary_opps = result
+                        elif scanner_type == "negrisk":
+                            negrisk_opps = result
+                        elif scanner_type == "latency":
+                            latency_opps, has_crypto_momentum = result
+                        elif scanner_type == "spike":
+                            spike_opps = result
+                        elif scanner_type == "cross_platform":
+                            cross_platform_opps = result
+                        elif scanner_type == "value":
+                            value_opps = result
+                        elif scanner_type == "maker":
+                            maker_opps = result
+                        elif scanner_type == "resolution":
+                            resolution_opps = result
+                    except Exception as e:
+                        logger.error("      %s scanner failed: %s", scanner_type.replace("_", " ").capitalize(), e)
+
+            # Stale-quote sniping: check book cache for recent price moves
+            stale_quote_opps: list[Opportunity] = []
+            if cfg.stale_quote_enabled and book_cache and not args.dry_run:
+                try:
+                    from scanner.stale_quote import StaleQuoteDetector
+                    if not hasattr(main, '_stale_detector'):
+                        main._stale_detector = StaleQuoteDetector(
+                            min_move_pct=cfg.stale_quote_min_move_pct,
+                            max_staleness_ms=cfg.stale_quote_max_staleness_ms,
+                            cooldown_sec=cfg.stale_quote_cooldown_sec,
+                        )
+                    # Build token→Market lookup for stale-quote signal generation
+                    token_market_map: dict[str, object] = {}
+                    for m in all_markets:
+                        token_market_map[m.yes_token_id] = m
+                        token_market_map[m.no_token_id] = m
+
+                    # Feed recent book cache updates to the stale detector
+                    cached_books = book_cache.get_all_books()
+                    for token_id, book in cached_books.items():
+                        if book.best_ask:
+                            token_market = token_market_map.get(token_id)
+                            stale_signal = main._stale_detector.on_price_update(
+                                token_id, book.best_ask.price, time.time(),
+                                market=token_market,
+                            )
+                            if stale_signal:
+                                opp = main._stale_detector.check_complementary_book(
+                                    stale_signal,
+                                    cached_books,
+                                    fee_model=fee_model,
+                                    gas_per_order=cfg.gas_per_order,
+                                    gas_price_gwei=cfg.gas_price_gwei,
+                                    min_profit_usd=scan_params.min_profit_usd,
+                                    min_roi_pct=scan_params.min_roi_pct,
+                                )
+                                if opp:
+                                    stale_quote_opps.append(opp)
+                except Exception as e:
+                    logger.debug("      Stale-quote scan error: %s", e)
+
+            all_opps = binary_opps + negrisk_opps + latency_opps + spike_opps + cross_platform_opps + value_opps + stale_quote_opps + maker_opps + resolution_opps
+
+            # Record opportunities in ArbTracker for persistence tracking
+            arb_tracker.record(cycle, all_opps)
 
             # In scan-only mode, filter out opportunities that safety would block
             if args.scan_only:
@@ -603,8 +813,12 @@ def main() -> None:
                         filtered_count, cfg.max_legs_per_opportunity,
                     )
 
-            # Build real ScoringContext per opportunity
-            contexts = _build_scoring_contexts(all_opps, book_cache, all_markets, cfg.target_size_usd)
+            # Build real ScoringContext per opportunity with ArbTracker confidence
+            has_inventory = pnl.current_exposure > 0 or any(opp.is_buy_arb for opp in all_opps)
+            contexts = _build_scoring_contexts(
+                all_opps, book_cache, all_markets, cfg.target_size_usd,
+                arb_tracker=arb_tracker, has_inventory=has_inventory,
+            )
             # Composite scoring with real context data
             scored_opps = rank_opportunities(all_opps, contexts=contexts)
             total_opps_found += len(all_opps)
@@ -617,6 +831,10 @@ def main() -> None:
                 "latency": len(latency_opps),
                 "spike": len(spike_opps),
                 "cross_platform": len(cross_platform_opps),
+                "value": len(value_opps),
+                "stale_quote": len(stale_quote_opps),
+                "maker": len(maker_opps),
+                "resolution": len(resolution_opps),
             }
 
             # Track best-ever stats for scan-only footer
@@ -756,6 +974,8 @@ def _build_scoring_contexts(
     book_cache: BookCache,
     all_markets: list,
     target_size: float,
+    arb_tracker: ArbTracker | None = None,
+    has_inventory: bool = True,
 ) -> list[ScoringContext]:
     """Build real ScoringContext for each opportunity using cached book data."""
     from datetime import datetime, timezone
@@ -802,12 +1022,22 @@ def _build_scoring_contexts(
 
         is_spike = opp.type in (OpportunityType.SPIKE_LAG, OpportunityType.LATENCY_ARB)
 
+        # Get confidence from ArbTracker if available
+        confidence = 0.5  # default
+        if arb_tracker:
+            confidence = arb_tracker.confidence(
+                opp.event_id,
+                depth_ratio=min_depth_ratio,
+                has_inventory=has_inventory,
+            )
+
         contexts.append(ScoringContext(
             market_volume=volume,
             recent_trade_count=0,
             time_to_resolution_hours=time_to_resolution_hours,
             is_spike=is_spike,
             book_depth_ratio=min_depth_ratio,
+            confidence=confidence,
         ))
 
     return contexts
@@ -821,7 +1051,7 @@ def _execute_single(
     breaker: CircuitBreaker,
     gas_oracle: GasOracle | None = None,
     position_tracker: PositionTracker | None = None,
-    platform_clients: dict[str, object] | None = None,
+    platform_clients: dict[str, PlatformClient] | None = None,
 ) -> None:
     """Execute a single opportunity with full safety checks."""
     # Opportunity TTL check (reject stale opportunities)
@@ -872,6 +1102,8 @@ def _execute_single(
         max_exposure_per_trade=cfg.max_exposure_per_trade,
         max_total_exposure=cfg.max_total_exposure,
         current_exposure=pnl.current_exposure,
+        kelly_odds_confirmed=cfg.kelly_odds_confirmed,
+        kelly_odds_cross_platform=cfg.kelly_odds_cross_platform,
     )
     if size <= 0:
         logger.info("        Position size = 0 (insufficient capital or edge), skipping")
@@ -895,6 +1127,20 @@ def _execute_single(
 
     if opp.type == OpportunityType.CROSS_PLATFORM_ARB:
         verify_cross_platform_books(sized_opp, pm_books, platform_books=ext_books_nested, min_depth=execution_size)
+        # Verify platform position limits
+        for leg in opp.legs:
+            if leg.platform and leg.platform not in ("polymarket", ""):
+                position_value = leg.price * execution_size
+                try:
+                    verify_platform_limits(
+                        leg.platform,
+                        position_value,
+                        kalshi_limit=cfg.kalshi_position_limit,
+                        fanatics_limit=cfg.fanatics_position_limit,
+                    )
+                except SafetyCheckFailed:
+                    logger.info("        Platform limit check failed for %s: %s", leg.platform, position_value)
+                    raise
 
     logger.info("        Verifying orderbook depth...")
     verify_depth(sized_opp, books)
@@ -916,6 +1162,7 @@ def _execute_single(
         use_fak=cfg.use_fak_orders,
         order_timeout_sec=cfg.order_timeout_sec,
         platform_clients=platform_clients,
+        cross_platform_deadline_sec=cfg.cross_platform_deadline_sec,
     )
 
     # Record

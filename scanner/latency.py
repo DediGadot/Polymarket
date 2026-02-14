@@ -28,6 +28,7 @@ from scanner.models import (
     LegOrder,
     Side,
 )
+from scanner.validation import validate_price, validate_size
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +110,10 @@ class LatencyScanner:
                 timeout=_TIMEOUT,
             )
             resp.raise_for_status()
-            price = float(resp.json()["price"])
+            raw_price = float(resp.json()["price"])
+            # Binance returns absolute crypto prices (e.g., $50,000 for BTC)
+            # Validate they're positive and finite (using validate_size which checks >= 0)
+            price = validate_size(raw_price, context=f"Binance spot ({symbol})")
 
             # Save previous before updating
             if symbol in self._spot_cache:

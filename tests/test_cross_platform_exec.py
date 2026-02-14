@@ -8,7 +8,13 @@ import pytest
 from executor.cross_platform import (
     execute_cross_platform,
     CrossPlatformUnwindFailed,
+    _persist_stuck,
+    _MAX_UNWIND_RETRIES,
+    _UNWIND_BACKOFF_SEC,
     _unwind_platform,
+)
+from executor.fill_state import (
+    FillState,
 )
 from scanner.models import (
     Opportunity,

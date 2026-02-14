@@ -18,6 +18,7 @@ from py_clob_client.clob_types import (
 from py_clob_client.order_builder.constants import BUY, SELL
 
 from scanner.models import OrderBook, PriceLevel, Side
+from scanner.validation import validate_price, validate_size
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +45,24 @@ def _sort_book_levels(
     The SDK does NOT guarantee sort order -- we must enforce it.
     """
     bids = tuple(sorted(
-        (PriceLevel(price=float(b.price), size=float(b.size)) for b in (raw_bids or [])),
+        (
+            PriceLevel(
+                price=validate_price(float(b.price), context="CLOB bid price"),
+                size=validate_size(float(b.size), context="CLOB bid size"),
+            )
+            for b in (raw_bids or [])
+        ),
         key=lambda lvl: lvl.price,
         reverse=True,
     ))
     asks = tuple(sorted(
-        (PriceLevel(price=float(a.price), size=float(a.size)) for a in (raw_asks or [])),
+        (
+            PriceLevel(
+                price=validate_price(float(a.price), context="CLOB ask price"),
+                size=validate_size(float(a.size), context="CLOB ask size"),
+            )
+            for a in (raw_asks or [])
+        ),
         key=lambda lvl: lvl.price,
     ))
     return bids, asks

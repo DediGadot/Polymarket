@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 
-from scanner.models import Opportunity
+from scanner.models import Opportunity, OpportunityType
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +21,6 @@ def kelly_fraction(edge: float, odds: float) -> float:
     """
     if odds <= 0:
         return 0.0
-    # For arb: edge = profit/cost, p = estimated fill probability
-    # Simplified: f = edge / odds (since p ~= 1 for confirmed arb)
     f = edge / odds
     # Half-Kelly for safety
     return max(0.0, min(f * 0.5, 1.0))
@@ -34,6 +32,8 @@ def compute_position_size(
     max_exposure_per_trade: float,
     max_total_exposure: float,
     current_exposure: float,
+    kelly_odds_confirmed: float = 0.65,
+    kelly_odds_cross_platform: float = 0.40,
 ) -> float:
     """
     Compute the number of sets to trade for a given opportunity.
@@ -53,13 +53,18 @@ def compute_position_size(
     if cost_per_set <= 0:
         return 0.0
 
-    net_profit_per_set = opportunity.net_profit_per_set
+    net_profit_per_set = opportunity.net_profit / opportunity.max_sets if opportunity.max_sets > 0 else 0
     if net_profit_per_set <= 0:
-        logger.info("Skipping opportunity with non-positive net profit per set: %.6f", net_profit_per_set)
         return 0.0
 
     edge = net_profit_per_set / cost_per_set
-    odds = 1.0  # risk = cost_per_set, potential payout = cost_per_set + profit_per_set
+
+    # Select odds based on arb type
+    if opportunity.type == OpportunityType.CROSS_PLATFORM_ARB:
+        odds = kelly_odds_cross_platform  # Higher execution risk
+    else:
+        odds = kelly_odds_confirmed  # Confirmed arb (10:1 implied)
+
     kelly_f = kelly_fraction(edge, odds)
 
     kelly_capital = kelly_f * bankroll

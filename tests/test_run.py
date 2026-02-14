@@ -69,7 +69,7 @@ class TestExecuteSingle:
             "n1": MagicMock(),
         }
 
-        cfg = Config(max_exposure_per_trade=500.0, max_total_exposure=5000.0)
+        cfg = Config(max_exposure_per_trade=5000.0, max_total_exposure=50000.0)
         opp = _make_binary_opp(leg_size=100.0)
         pnl = MagicMock()
         breaker = MagicMock()
@@ -103,7 +103,7 @@ class TestExecuteSingle:
         mock_execute.return_value = MagicMock(net_pnl=1.0)
         mock_get_books.return_value = {"y1": MagicMock(), "n1": MagicMock()}
 
-        cfg = Config(max_exposure_per_trade=500.0, max_total_exposure=5000.0)
+        cfg = Config(max_exposure_per_trade=5000.0, max_total_exposure=50000.0)
         opp = _make_binary_opp(leg_size=100.0)
         pnl = MagicMock()
         breaker = MagicMock()
@@ -123,7 +123,7 @@ class TestExecuteSingle:
     @patch("run.get_orderbooks")
     def test_cross_platform_requires_platform_clients(self, mock_get_books):
         mock_get_books.side_effect = AssertionError("should not fetch PM books without platform clients")
-        cfg = Config(max_exposure_per_trade=500.0, max_total_exposure=5000.0)
+        cfg = Config(max_exposure_per_trade=5000.0, max_total_exposure=50000.0)
         opp = _make_cross_platform_opp(leg_size=100.0)
 
         with pytest.raises(run.SafetyCheckFailed, match="platform_clients required"):
@@ -157,7 +157,7 @@ class TestExecuteSingle:
         kalshi_client = MagicMock()
         kalshi_client.get_orderbooks.return_value = kalshi_books
 
-        cfg = Config(max_exposure_per_trade=500.0, max_total_exposure=5000.0)
+        cfg = Config(max_exposure_per_trade=5000.0, max_total_exposure=50000.0)
         opp = _make_cross_platform_opp(leg_size=100.0)
 
         run._execute_single(
@@ -181,7 +181,7 @@ class TestPolymarketOnlyMode:
             cross_platform_enabled=True,
         )
 
-        run._enforce_polymarket_only_mode(cfg)
+        cfg = run._enforce_polymarket_only_mode(cfg)
 
         assert cfg.latency_enabled is False
         assert cfg.cross_platform_enabled is False
@@ -193,7 +193,7 @@ class TestPolymarketOnlyMode:
             cross_platform_enabled=True,
         )
 
-        run._enforce_polymarket_only_mode(cfg)
+        cfg = run._enforce_polymarket_only_mode(cfg)
 
         assert cfg.latency_enabled is True
         assert cfg.cross_platform_enabled is True

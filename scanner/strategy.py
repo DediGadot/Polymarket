@@ -46,11 +46,16 @@ class MarketState:
     active_spike_count: int = 0
     has_crypto_momentum: bool = False
     recent_win_rate: float = 0.50
+    gas_cost_usd: float | None = None  # USD cost per order when available
 
 
 # Thresholds for mode selection
-HIGH_GAS_GWEI = 100.0
-LOW_GAS_GWEI = 20.0
+# Dollar-denominated thresholds (preferred when available)
+HIGH_GAS_USD = 0.10  # CONSERVATIVE when gas > $0.10/order
+LOW_GAS_USD = 0.01   # AGGRESSIVE when gas < $0.01/order
+# Gwei fallback thresholds (for Polygon L2, not Ethereum)
+HIGH_GAS_GWEI = 1000.0  # ~$0.03/order on Polygon
+LOW_GAS_GWEI = 100.0   # ~$0.003/order on Polygon
 WIDE_SPREAD_PCT = 3.0
 TIGHT_SPREAD_PCT = 1.0
 
@@ -133,13 +138,20 @@ class StrategySelector:
             return StrategyMode.LATENCY_FOCUS
 
         # Priority 3: Market conditions
-        low_gas = state.gas_price_gwei < LOW_GAS_GWEI
+        # Prefer dollar-denominated gas cost when available
+        if state.gas_cost_usd is not None:
+            low_gas = state.gas_cost_usd < LOW_GAS_USD
+            high_gas = state.gas_cost_usd > HIGH_GAS_USD
+        else:
+            # Fall back to gwei thresholds for Polygon L2
+            low_gas = state.gas_price_gwei < LOW_GAS_GWEI
+            high_gas = state.gas_price_gwei > HIGH_GAS_GWEI
+
         wide_spreads = state.avg_spread_pct > WIDE_SPREAD_PCT
 
         if low_gas and wide_spreads:
             return StrategyMode.AGGRESSIVE
 
-        high_gas = state.gas_price_gwei > HIGH_GAS_GWEI
         tight_spreads = state.avg_spread_pct < TIGHT_SPREAD_PCT
 
         if high_gas or tight_spreads:

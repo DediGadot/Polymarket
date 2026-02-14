@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass, field
 
 from scanner.models import BookFetcher, OrderBook, PriceLevel
+from scanner.validation import validate_price, validate_size
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +36,17 @@ class BookCache:
         bids/asks: [{"price": "0.52", "size": "100"}, ...]
         """
         parsed_bids = tuple(
-            PriceLevel(price=float(b["price"]), size=float(b["size"]))
+            PriceLevel(
+                price=validate_price(float(b["price"]), context=f"WS snapshot bid ({token_id})"),
+                size=validate_size(float(b.get("size", 0)), context=f"WS snapshot bid size ({token_id})"),
+            )
             for b in bids if float(b.get("size", 0)) > 0
         )
         parsed_asks = tuple(
-            PriceLevel(price=float(a["price"]), size=float(a["size"]))
+            PriceLevel(
+                price=validate_price(float(a["price"]), context=f"WS snapshot ask ({token_id})"),
+                size=validate_size(float(a.get("size", 0)), context=f"WS snapshot ask size ({token_id})"),
+            )
             for a in asks if float(a.get("size", 0)) > 0
         )
         # Sort bids descending (best first), asks ascending (best first)
@@ -68,8 +75,8 @@ class BookCache:
                 logger.debug("Delta for unknown token %s, ignoring", token_id)
                 return
 
-            price = float(price_change["price"])
-            size = float(price_change.get("size", 0))
+            price = validate_price(float(price_change["price"]), context=f"WS delta price ({token_id})")
+            size = validate_size(float(price_change.get("size", 0)), context=f"WS delta size ({token_id})")
             side = price_change.get("side", "").upper()
 
             if side == "BUY":
@@ -106,11 +113,13 @@ class BookCache:
 
     def get_book(self, token_id: str) -> OrderBook | None:
         """Return cached book or None if not cached."""
-        return self._books.get(token_id)
+        with self._lock:
+            return self._books.get(token_id)
 
     def get_books(self, token_ids: list[str]) -> dict[str, OrderBook]:
         """Return cached books for multiple tokens. Missing tokens are omitted."""
-        return {tid: self._books[tid] for tid in token_ids if tid in self._books}
+        with self._lock:
+            return {tid: self._books[tid] for tid in token_ids if tid in self._books}
 
     def get_books_snapshot(self, token_ids: list[str]) -> tuple[dict[str, OrderBook], float]:
         """
@@ -141,6 +150,47 @@ class BookCache:
         """Number of tokens currently cached."""
         return len(self._books)
 
+    def prune(self, max_age_sec: float | None = None) -> int:
+        """
+        Remove cached books older than max_age_sec.
+
+        Prevents memory leak in long-running sessions by pruning
+        stale entries that haven't been updated recently.
+
+        Args:
+            max_age_sec: Maximum age in seconds. Defaults to self.max_age_sec.
+
+        Returns:
+            Number of entries removed.
+        """
+        if max_age_sec is None:
+            max_age_sec = self.max_age_sec
+
+        now = time.time()
+        removed = 0
+
+        with self._lock:
+            # Find stale token IDs
+            stale_tokens = [
+                token_id
+                for token_id, ts in self._timestamps.items()
+                if now - ts > max_age_sec
+            ]
+
+            # Remove stale entries
+            for token_id in stale_tokens:
+                self._books.pop(token_id, None)
+                self._timestamps.pop(token_id, None)
+                removed += 1
+
+        if removed > 0:
+            logger.debug(
+                "BookCache: pruned %d stale entries (%d remaining, max_age=%ds)",
+                removed, len(self._books), max_age_sec,
+            )
+
+        return removed
+
     def make_caching_fetcher(self, rest_fetcher: BookFetcher) -> BookFetcher:
         """
         Return a BookFetcher callable that:
@@ -166,6 +216,11 @@ class BookCache:
                         result[tid] = book
             return result
         return _caching_fetcher
+
+    def get_all_books(self) -> dict[str, OrderBook]:
+        """Return a snapshot of all cached books."""
+        with self._lock:
+            return dict(self._books)
 
     def clear(self) -> None:
         """Drop all cached data."""

@@ -118,6 +118,13 @@ class TestFilterAboutToResolve:
         result = filter_about_to_resolve(markets, min_hours=0.0)
         assert len(result) == 1
 
+    def test_min_hours_zero_passes_30_min_markets(self):
+        """With min_hours=0.0, markets resolving in 30 minutes are allowed."""
+        # Market ending in 30 minutes (0.5 hours)
+        markets = [_make_market(end_date=_future_iso(0.5))]
+        result = filter_about_to_resolve(markets, min_hours=0.0)
+        assert len(result) == 1
+
     def test_z_suffix_parsed(self):
         """ISO 8601 with Z suffix is parsed correctly."""
         future = datetime.now(timezone.utc) + timedelta(hours=5)

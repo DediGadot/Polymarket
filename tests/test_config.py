@@ -19,8 +19,8 @@ class TestConfig:
         assert cfg.signature_type == 1
         assert cfg.min_profit_usd == 0.50
         assert cfg.min_roi_pct == 2.0
-        assert cfg.max_exposure_per_trade == 500.0
-        assert cfg.max_total_exposure == 5000.0
+        assert cfg.max_exposure_per_trade == 5000.0
+        assert cfg.max_total_exposure == 50000.0
         assert cfg.paper_trading is True
         assert cfg.chain_id == 137
         assert cfg.scan_interval_sec == 1.0

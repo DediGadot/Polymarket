@@ -17,6 +17,8 @@ from client.clob import (
     post_orders,
     cancel_order,
 )
+from client.platform import PlatformClient
+from executor.tick_size import quantize_price
 from scanner.models import (
     Opportunity,
     OpportunityType,
@@ -43,8 +45,9 @@ def execute_opportunity(
     paper_trading: bool = False,
     use_fak: bool = True,
     order_timeout_sec: float = 5.0,
-    kalshi_client: object | None = None,
-    platform_clients: dict[str, object] | None = None,
+    kalshi_client: PlatformClient | None = None,
+    platform_clients: dict[str, PlatformClient] | None = None,
+    cross_platform_deadline_sec: float = 5.0,
 ) -> TradeResult:
     """
     Execute an arbitrage opportunity. Places all leg orders, tracks fills.
@@ -79,7 +82,8 @@ def execute_opportunity(
             raise ValueError("platform_clients required for CROSS_PLATFORM_ARB execution")
         return execute_cross_platform(
             client, all_clients, opportunity, size,
-            paper_trading=False, use_fak=use_fak,
+            paper_trading=paper_trading, use_fak=use_fak,
+            deadline_sec=cross_platform_deadline_sec,
         )
     else:
         raise ValueError(f"Unknown opportunity type: {opportunity.type}")
@@ -93,8 +97,8 @@ def _paper_execute(
     """Simulate execution for paper trading mode."""
     elapsed_ms = (time.time() - start_time) * 1000
 
-    fill_prices = [leg.price for leg in opportunity.legs]
-    fill_sizes = [size] * len(opportunity.legs)
+    fill_prices = tuple(leg.price for leg in opportunity.legs)
+    fill_sizes = tuple(size for _ in opportunity.legs)
     net_pnl = opportunity.net_profit_per_set * size - opportunity.estimated_gas_cost
 
     logger.info(
@@ -104,7 +108,7 @@ def _paper_execute(
 
     return TradeResult(
         opportunity=opportunity,
-        order_ids=["paper_" + str(i) for i in range(len(opportunity.legs))],
+        order_ids=tuple("paper_" + str(i) for i in range(len(opportunity.legs))),
         fill_prices=fill_prices,
         fill_sizes=fill_sizes,
         fees=0.0,
@@ -133,11 +137,13 @@ def _execute_binary(
     signed_orders = []
     for leg in opportunity.legs:
         neg_risk = False  # binary markets are not negRisk
+        tick_size = float(leg.tick_size) if hasattr(leg, 'tick_size') and leg.tick_size else 0.01
+        quantized_price = quantize_price(leg.price, tick_size)
         signed = create_limit_order(
             client,
             token_id=leg.token_id,
             side=leg.side,
-            price=leg.price,
+            price=quantized_price,
             size=size,
             neg_risk=neg_risk,
         )
@@ -147,9 +153,9 @@ def _execute_binary(
     responses = post_orders(client, signed_orders)
 
     # Track results
-    order_ids = []
-    fill_prices = []
-    fill_sizes = []
+    order_ids: list[str] = []
+    fill_prices: list[float] = []
+    fill_sizes: list[float] = []
     all_filled = True
 
     for i, resp in enumerate(responses):
@@ -221,9 +227,9 @@ def _execute_binary(
 
     return TradeResult(
         opportunity=opportunity,
-        order_ids=order_ids,
-        fill_prices=fill_prices,
-        fill_sizes=fill_sizes,
+        order_ids=tuple(order_ids),
+        fill_prices=tuple(fill_prices),
+        fill_sizes=tuple(fill_sizes),
         fees=0.0,
         gas_cost=opportunity.estimated_gas_cost,
         net_pnl=net_pnl,
@@ -250,11 +256,13 @@ def _execute_negrisk(
     # Build all signed orders
     signed_orders = []
     for leg in legs:
+        tick_size = float(leg.tick_size) if hasattr(leg, 'tick_size') and leg.tick_size else 0.01
+        quantized_price = quantize_price(leg.price, tick_size)
         signed = create_limit_order(
             client,
             token_id=leg.token_id,
             side=leg.side,
-            price=leg.price,
+            price=quantized_price,
             size=size,
             neg_risk=True,
         )
@@ -341,9 +349,9 @@ def _execute_negrisk(
 
     return TradeResult(
         opportunity=opportunity,
-        order_ids=order_ids,
-        fill_prices=fill_prices,
-        fill_sizes=fill_sizes,
+        order_ids=tuple(order_ids),
+        fill_prices=tuple(fill_prices),
+        fill_sizes=tuple(fill_sizes),
         fees=0.0,
         gas_cost=opportunity.estimated_gas_cost,
         net_pnl=net_pnl,
@@ -366,11 +374,13 @@ def _execute_single_leg(
     assert len(opportunity.legs) == 1, f"Single-leg trade must have 1 leg, got {len(opportunity.legs)}"
     leg = opportunity.legs[0]
 
+    tick_size = float(leg.tick_size) if hasattr(leg, 'tick_size') and leg.tick_size else 0.01
+    quantized_price = quantize_price(leg.price, tick_size)
     signed = create_limit_order(
         client,
         token_id=leg.token_id,
         side=leg.side,
-        price=leg.price,
+        price=quantized_price,
         size=size,
         neg_risk=False,
     )
@@ -406,9 +416,9 @@ def _execute_single_leg(
 
     return TradeResult(
         opportunity=opportunity,
-        order_ids=[oid],
-        fill_prices=[fill_price],
-        fill_sizes=[fill_size],
+        order_ids=(oid,),
+        fill_prices=(fill_price,),
+        fill_sizes=(fill_size,),
         fees=0.0,
         gas_cost=opportunity.estimated_gas_cost,
         net_pnl=net_pnl,

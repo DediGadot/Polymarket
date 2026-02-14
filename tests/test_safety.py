@@ -17,6 +17,7 @@ from executor.safety import (
     verify_edge_intact,
     verify_inventory,
     verify_cross_platform_books,
+    verify_platform_limits,
 )
 from client.data import PositionTracker
 from scanner.models import (
@@ -515,6 +516,116 @@ class TestVerifyEdgeIntact:
         with pytest.raises(SafetyCheckFailed, match="Edge gone"):
             verify_edge_intact(opp, books)
 
+    def test_vwap_rejects_thin_book(self):
+        """Best-level shows arb, but VWAP across levels does not.
+
+        Level 1: ask=0.40 (tiny size), Level 2: ask=0.51 (rest)
+        Old top-of-book: cost=0.40+0.40=0.80, arb exists!
+        VWAP: since level 1 only has < 1 share, we must walk into level 2
+        For 1 set: need to sweep both books from best level upward
+        If first level has < 1 share, we immediately hit level 2 at 0.51
+        VWAP total cost = 0.51 + 0.51 = 1.02 > 1.0, no arb
+
+        This catches false positives from thin liquidity at best level.
+        """
+        # Need to adjust expected profit to reflect top-of-book edge
+        # Top of book: 0.40 + 0.40 = 0.80, profit = 0.20
+        thin_opp = Opportunity(
+            type=OpportunityType.BINARY_REBALANCE,
+            event_id="e1",
+            legs=(
+                LegOrder("y1", Side.BUY, 0.40, 100),
+                LegOrder("n1", Side.BUY, 0.40, 100),
+            ),
+            expected_profit_per_set=0.20,  # top-of-book edge
+            net_profit_per_set=0.20,
+            max_sets=100,
+            gross_profit=20.0,
+            estimated_gas_cost=0.01,
+            net_profit=19.99,
+            roi_pct=25.0,
+            required_capital=80.0,
+        )
+        books = {
+            "y1": OrderBook(
+                token_id="y1",
+                bids=(PriceLevel(0.39, 200),),
+                # Very thin at best - practically nothing at 0.40
+                asks=(PriceLevel(0.40, 0.1), PriceLevel(0.51, 100)),
+            ),
+            "n1": OrderBook(
+                token_id="n1",
+                bids=(PriceLevel(0.39, 200),),
+                asks=(PriceLevel(0.40, 0.1), PriceLevel(0.51, 100)),
+            ),
+        }
+        with pytest.raises(SafetyCheckFailed, match="Edge gone"):
+            verify_edge_intact(thin_opp, books)
+
+    def test_vwap_rejects_thin_book(self):
+        """Best-level shows arb, but VWAP across levels does not.
+
+        Level 1: ask=0.40 (tiny size), Level 2: ask=0.51 (rest)
+        Old top-of-book: cost=0.40+0.40=0.80, arb exists!
+        VWAP: since level 1 only has < 1 share, we must walk into level 2
+        For 1 set: need to sweep both books from best level upward
+        If first level has < 1 share, we immediately hit level 2 at 0.51
+        VWAP total cost = 0.51 + 0.51 = 1.02 > 1.0, no arb
+
+        This catches false positives from thin liquidity at best level.
+        """
+        # Need to adjust expected profit to reflect top-of-book edge
+        # Top of book: 0.40 + 0.40 = 0.80, profit = 0.20
+        thin_opp = Opportunity(
+            type=OpportunityType.BINARY_REBALANCE,
+            event_id="e1",
+            legs=(
+                LegOrder("y1", Side.BUY, 0.40, 100),
+                LegOrder("n1", Side.BUY, 0.40, 100),
+            ),
+            expected_profit_per_set=0.20,  # top-of-book edge
+            net_profit_per_set=0.20,
+            max_sets=100,
+            gross_profit=20.0,
+            estimated_gas_cost=0.01,
+            net_profit=19.99,
+            roi_pct=25.0,
+            required_capital=80.0,
+        )
+        books = {
+            "y1": OrderBook(
+                token_id="y1",
+                bids=(PriceLevel(0.39, 200),),
+                # Very thin at best - practically nothing at 0.40
+                asks=(PriceLevel(0.40, 0.1), PriceLevel(0.51, 100)),
+            ),
+            "n1": OrderBook(
+                token_id="n1",
+                bids=(PriceLevel(0.39, 200),),
+                asks=(PriceLevel(0.40, 0.1), PriceLevel(0.51, 100)),
+            ),
+        }
+        with pytest.raises(SafetyCheckFailed, match="Edge eroded"):
+            verify_edge_intact(thin_opp, books)
+
+    def test_vwap_accepts_deep_book(self):
+        """Deep book with consistent pricing should pass VWAP check."""
+        opp = _make_opp()
+        books = {
+            "y1": OrderBook(
+                token_id="y1",
+                bids=(PriceLevel(0.44, 200),),
+                # Deep liquidity at good price
+                asks=(PriceLevel(0.45, 100), PriceLevel(0.46, 100)),
+            ),
+            "n1": OrderBook(
+                token_id="n1",
+                bids=(PriceLevel(0.44, 200),),
+                asks=(PriceLevel(0.45, 100), PriceLevel(0.46, 100)),
+            ),
+        }
+        verify_edge_intact(opp, books)  # should not raise
+
 
 class TestVerifyInventory:
     def test_buy_only_passes_trivially(self):
@@ -610,3 +721,28 @@ class TestVerifyCrossPlatformBooks:
         )
         with pytest.raises(SafetyCheckFailed, match="No orderbook"):
             verify_cross_platform_books(opp, pm_books={}, kalshi_books={}, min_depth=1.0)
+
+
+class TestVerifyPlatformLimits:
+    def test_passes_when_within_limits(self):
+        """Should pass when position value is within platform limits."""
+        from executor.safety import verify_platform_limits
+        verify_platform_limits("kalshi", 1000.0, kalshi_limit=25000.0)
+        verify_platform_limits("fanatics", 5000.0, fanatics_limit=10000.0)
+
+    def test_raises_when_exceeds_kalshi_limit(self):
+        """Should raise when position exceeds Kalshi limit."""
+        from executor.safety import verify_platform_limits, SafetyCheckFailed
+        with pytest.raises(SafetyCheckFailed, match="exceeds kalshi limit"):
+            verify_platform_limits("kalshi", 30000.0, kalshi_limit=25000.0)
+
+    def test_raises_when_exceeds_fanatics_limit(self):
+        """Should raise when position exceeds Fanatics limit."""
+        from executor.safety import verify_platform_limits, SafetyCheckFailed
+        with pytest.raises(SafetyCheckFailed, match="exceeds fanatics limit"):
+            verify_platform_limits("fanatics", 30000.0, fanatics_limit=25000.0)
+
+    def test_unknown_platform_passes(self):
+        """Should pass for unknown platforms (no limit check)."""
+        from executor.safety import verify_platform_limits
+        verify_platform_limits("unknown", 50000.0)  # no limit defined, should pass

@@ -1,5 +1,5 @@
 """
-Cross-platform event matching. Maps events between Polymarket and external platforms.
+Cross-platform event and contract matching. Maps events between Polymarket and external platforms.
 
 Three matching strategies (in priority order):
 1. Manual JSON map (confidence = 1.0)
@@ -8,6 +8,10 @@ Three matching strategies (in priority order):
 
 Settlement mismatch is the #1 risk in cross-platform arb, so we require
 high confidence (configurable, default 90%) before allowing execution.
+
+After event-level matching, contract-level matching validates settlement equivalence:
+- Detects numeric threshold mismatches (e.g., "Over 2.5" != "Over 3.5")
+- Filters low-confidence contract matches before trading
 
 Generalized for N platforms: each MatchedEvent contains PlatformMatch entries
 for every external platform that matches a PM event. Backward-compat properties
@@ -51,6 +55,19 @@ _SETTLEMENT_KEYWORDS = frozenset({
     "by december",
     "first term",
     "second term",
+})
+
+# Keywords that indicate numeric thresholds (for contract-level matching)
+_SETTLEMENT_THRESHOLD_KEYWORDS = frozenset({
+    "over",
+    "under",
+    "above",
+    "below",
+    "exceeds",
+    "goals",
+    "points",
+    "wins",
+    "$",  # Dollar amounts with numbers
 })
 
 
@@ -102,6 +119,15 @@ class MatchedEvent:
         return best.match_method
 
 
+@dataclass(frozen=True)
+class ContractMatch:
+    """A matched contract (market) between Polymarket and an external platform."""
+    pm_market: Market
+    ext_market: object  # KalshiMarket or similar (has .ticker, .title attrs)
+    confidence: float  # 0.0 - 1.0
+    match_method: str  # "manual", "verified", or "fuzzy"
+
+
 def _year_mismatch(pm_title: str, other_title: str) -> bool:
     """Reject matches where the year differs (e.g., 2024 vs 2028)."""
     pm_years = set(_YEAR_PATTERN.findall(pm_title))
@@ -120,6 +146,45 @@ def _settlement_mismatch_risk(pm_title: str, other_title: str) -> bool:
         other_has = kw in other_lower
         if pm_has != other_has:
             return True
+    return False
+
+
+def _numeric_threshold_mismatch(title1: str, title2: str) -> bool:
+    """
+    Check if titles differ on numeric thresholds.
+
+    E.g., "Over 2.5 goals" vs "Over 3.5 goals" should mismatch.
+    Uses fuzzy text matching for numbers but requires exact match on threshold values.
+    """
+    import re
+
+    # Pattern for numeric thresholds (including decimals like 2.5, 3.5, and dollar amounts)
+    number_pattern = re.compile(r'\$?(\d+\.?\d*)')
+
+    def extract_thresholds(s: str) -> set[str]:
+        """Extract numeric thresholds that follow threshold keywords."""
+        s_lower = s.lower()
+        thresholds = set()
+
+        # Find all numbers
+        for match in number_pattern.finditer(s):
+            num = match.group(1)
+            start, end = match.span()
+
+            # Check if this number follows a threshold keyword within ~20 chars
+            before = s_lower[max(0, start - 20):start]
+            if any(kw in before for kw in ["over", "under", "above", "below", "exceeds"]):
+                thresholds.add(num)
+
+        return thresholds
+
+    thresholds1 = extract_thresholds(title1)
+    thresholds2 = extract_thresholds(title2)
+
+    # If both have thresholds but they differ, it's a mismatch
+    if thresholds1 and thresholds2 and thresholds1 != thresholds2:
+        return True
+
     return False
 
 
@@ -351,3 +416,87 @@ class EventMatcher:
             confidence=0.0,  # Blocked from execution by confidence filter
             match_method="fuzzy",
         )
+
+
+def match_contracts(
+    pm_markets: tuple[Market, ...],
+    ext_markets: list,
+) -> list[ContractMatch]:
+    """
+    Match individual contracts (markets) after event-level matching.
+
+    Performs a second pass of fuzzy matching on contract titles to detect
+    settlement-equivalence issues like "Over 2.5" vs "Over 3.5".
+
+    Args:
+        pm_markets: Polymarket markets in the matched event
+        ext_markets: External platform markets in the matched event
+
+    Returns:
+        List of ContractMatch with confidence scores. Low-confidence matches
+        should be filtered out before trading.
+    """
+    from rapidfuzz import fuzz
+
+    matches: list[ContractMatch] = []
+
+    for pm_market in pm_markets:
+        best_score = 0.0
+        best_ext_market = None
+
+        for ext_market in ext_markets:
+            # Check for numeric threshold mismatch first
+            if _numeric_threshold_mismatch(pm_market.question, ext_market.title):
+                logger.info(
+                    "Contract-level mismatch (threshold): PM '%s' vs ext '%s'",
+                    pm_market.question[:50], ext_market.title[:50],
+                )
+                continue
+
+            # Event-level settlement check still applies
+            if _settlement_mismatch_risk(pm_market.question, ext_market.title):
+                logger.info(
+                    "Contract-level mismatch (settlement keyword): PM '%s' vs ext '%s'",
+                    pm_market.question[:50], ext_market.title[:50],
+                )
+                continue
+
+            # Fuzzy match score
+            score = fuzz.token_set_ratio(pm_market.question, ext_market.title)
+            if score > best_score:
+                best_score = score
+                best_ext_market = ext_market
+
+        if best_ext_market and best_score >= FUZZY_THRESHOLD:
+            matches.append(ContractMatch(
+                pm_market=pm_market,
+                ext_market=best_ext_market,
+                confidence=best_score / 100.0,
+                match_method="fuzzy",
+            ))
+        elif best_ext_market:
+            # Below threshold but log it
+            logger.warning(
+                "Contract match below threshold: PM '%s' vs ext '%s' (score=%.1f%% < %.1f%%)",
+                pm_market.question[:50], best_ext_market.title[:50],
+                best_score, FUZZY_THRESHOLD,
+            )
+
+    return matches
+
+
+def filter_by_confidence(
+    contract_matches: list[ContractMatch],
+    min_confidence: float = 0.90,
+) -> list[ContractMatch]:
+    """
+    Filter contract matches by minimum confidence threshold.
+
+    Args:
+        contract_matches: List of ContractMatch to filter
+        min_confidence: Minimum confidence (0.0 - 1.0) to allow
+
+    Returns:
+        Filtered list of ContractMatch with confidence >= min_confidence
+    """
+    return [cm for cm in contract_matches if cm.confidence >= min_confidence]

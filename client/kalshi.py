@@ -14,6 +14,7 @@ import httpx
 
 from client.kalshi_auth import KalshiAuth
 from scanner.models import OrderBook, PriceLevel, BookFetcher
+from scanner.validation import validate_price, validate_size
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,10 @@ class KalshiClient:
     def _request(self, method: str, path: str, **kwargs) -> dict:
         """Make an authenticated request to Kalshi API."""
         url = f"{self._host}{path}"
-        headers = self._auth.sign_request(method, path)
+        # Sign with the full URL path (e.g. /trade-api/v2/markets), not the relative path.
+        from urllib.parse import urlparse
+        full_path = urlparse(url).path
+        headers = self._auth.sign_request(method, full_path)
         headers["Content-Type"] = "application/json"
         headers["Accept"] = "application/json"
 
@@ -156,34 +160,77 @@ class KalshiClient:
         # Kalshi format: {"yes": [[price_cents, size], ...], "no": [[price_cents, size], ...]}
         # We model YES token: bids = yes bids, asks = yes asks
         # Kalshi gives "yes" and "no" arrays of [price, quantity] where price is in cents
-        yes_bids_raw = ob.get("yes", [])
-        no_bids_raw = ob.get("no", [])
+        yes_bids_raw = ob.get("yes") or []
+        no_bids_raw = ob.get("no") or []
 
         # Kalshi orderbook: "yes" contains bid levels for YES side (sorted desc by price)
         # To get asks for YES: NO bids at price P means YES ask at (100 - P) cents
         bids = tuple(sorted(
-            (PriceLevel(price=lvl[0] / 100.0, size=float(lvl[1])) for lvl in yes_bids_raw if lvl[1] > 0),
+            (
+                PriceLevel(
+                    price=validate_price(lvl[0] / 100.0, context="Kalshi YES bid price"),
+                    size=validate_size(float(lvl[1]), context="Kalshi YES bid size"),
+                )
+                for lvl in yes_bids_raw if lvl[1] > 0
+            ),
             key=lambda level: level.price,
             reverse=True,
         ))
 
         asks = tuple(sorted(
-            (PriceLevel(price=(100 - lvl[0]) / 100.0, size=float(lvl[1])) for lvl in no_bids_raw if lvl[1] > 0),
+            (
+                PriceLevel(
+                    price=validate_price((100 - lvl[0]) / 100.0, context="Kalshi YES ask price"),
+                    size=validate_size(float(lvl[1]), context="Kalshi YES ask size"),
+                )
+                for lvl in no_bids_raw if lvl[1] > 0
+            ),
             key=lambda level: level.price,
         ))
 
         return OrderBook(token_id=ticker, bids=bids, asks=asks)
 
-    def get_orderbooks(self, tickers: list[str]) -> dict[str, OrderBook]:
+    def get_orderbooks(self, tickers: list[str], max_workers: int = 4) -> dict[str, OrderBook]:
         """
-        Fetch orderbooks for multiple tickers (sequential -- no batch endpoint on Kalshi).
+        Fetch orderbooks for multiple tickers in parallel using ThreadPoolExecutor.
+
+        Args:
+            tickers: List of market tickers to fetch
+            max_workers: Maximum number of parallel threads (default: 4)
+
+        Returns:
+            Dictionary mapping ticker to OrderBook ( skips failed tickers with warning)
         """
-        result: dict[str, OrderBook] = {}
-        for ticker in tickers:
+        if not tickers:
+            return {}
+
+        if len(tickers) == 1:
+            # Single ticker - no need for threading overhead
             try:
-                result[ticker] = self.get_orderbook(ticker)
+                return {tickers[0]: self.get_orderbook(tickers[0])}
+            except httpx.HTTPStatusError as e:
+                logger.warning("Failed to fetch Kalshi orderbook for %s: %s", tickers[0], e)
+                return {}
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        result: dict[str, OrderBook] = {}
+
+        def _fetch_single(ticker: str) -> tuple[str, OrderBook | None]:
+            """Fetch a single ticker, returning (ticker, book) or (ticker, None) on error."""
+            try:
+                return ticker, self.get_orderbook(ticker)
             except httpx.HTTPStatusError as e:
                 logger.warning("Failed to fetch Kalshi orderbook for %s: %s", ticker, e)
+                return ticker, None
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_fetch_single, ticker): ticker for ticker in tickers}
+            for future in as_completed(futures):
+                ticker, book = future.result()
+                if book is not None:
+                    result[ticker] = book
+
         return result
 
     @property

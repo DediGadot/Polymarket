@@ -28,8 +28,8 @@ def _cfg():
         polymarket_profile_address="0xtest",
         min_profit_usd=0.01,
         min_roi_pct=0.1,
-        max_exposure_per_trade=500,
-        max_total_exposure=5000,
+        max_exposure_per_trade=5000,
+        max_total_exposure=50000,
         paper_trading=True,
     )
 

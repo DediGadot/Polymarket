@@ -10,6 +10,8 @@ import time
 
 import httpx
 
+from scanner.validation import validate_gas_gwei
+
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 5.0
@@ -57,13 +59,15 @@ class GasOracle:
             resp.raise_for_status()
             hex_price = resp.json()["result"]
             wei = int(hex_price, 16)
-            gwei = wei / 1e9
+            gwei = validate_gas_gwei(wei / 1e9, context="Polygon gas")
             self._cached_gas_gwei = gwei
             self._gas_ts = now
             logger.debug("Gas price: %.1f gwei", gwei)
             return gwei
         except Exception as e:
             logger.warning("Gas price fetch failed, using default %.1f gwei: %s", self._default_gas_gwei, e)
+            self._cached_gas_gwei = self._default_gas_gwei
+            self._gas_ts = now
             return self._default_gas_gwei
 
     def get_matic_usd(self) -> float:
@@ -88,6 +92,8 @@ class GasOracle:
             return self._cached_matic_usd
         except Exception as e:
             logger.warning("MATIC/USD fetch failed, using default $%.2f: %s", self._default_matic_usd, e)
+            self._cached_matic_usd = self._default_matic_usd
+            self._matic_ts = now
             return self._default_matic_usd
 
     def estimate_cost_usd(self, n_orders: int, gas_per_order: int) -> float:

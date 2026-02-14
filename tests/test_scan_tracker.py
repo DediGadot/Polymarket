@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections import deque
 
 from scanner.models import (
     Opportunity,
@@ -149,3 +150,44 @@ class TestUniqueEventDedup:
         s = t.summary()
         assert s["opportunities_found"] == 3
         assert s["unique_events"] == 2
+
+
+class TestBoundedMemory:
+    """Tests for memory leak fixes (task #24)."""
+
+    def test_opportunities_capped_at_100_cycles(self):
+        """opportunities list should be capped to prevent unbounded growth."""
+        t = ScanTracker(max_opportunities=100)
+
+        # Insert 200 cycles worth of opportunities
+        for i in range(200):
+            opps = [_make_opp(event_id=f"evt_{i}", net_profit=float(i))]
+            t.record_cycle(i, 10, opps)
+
+        # Should only retain last 100 opportunities
+        assert len(t.opportunities) <= 100, f"Expected <= 100, got {len(t.opportunities)}"
+
+    def test_opportunities_kept_when_under_cap(self):
+        """When under the cap, all opportunities should be retained."""
+        t = ScanTracker(max_opportunities=100)
+
+        for i in range(50):
+            opps = [_make_opp(event_id=f"evt_{i}")]
+            t.record_cycle(i, 10, opps)
+
+        assert len(t.opportunities) == 50
+
+    def test_summary_still_accurate_with_cap(self):
+        """Summary calculations should work correctly even when opportunities are capped."""
+        t = ScanTracker(max_opportunities=50)
+
+        # Insert more than cap
+        for i in range(100):
+            opps = [_make_opp(net_profit=5.0, roi_pct=2.5)]
+            t.record_cycle(i, 10, opps)
+
+        s = t.summary()
+        # Should reflect actual cycles run, not capped opportunity count
+        assert s["total_cycles"] == 99  # 0-99 = 100 cycles
+        # But opportunities_found should be capped or close to cap
+        assert s["opportunities_found"] <= 50

@@ -109,7 +109,7 @@ class TestPaperExecute:
 
         assert result.fully_filled is True
         assert len(result.order_ids) == 3
-        assert result.fill_sizes == [30.0, 30.0, 30.0]
+        assert result.fill_sizes == (30.0, 30.0, 30.0)
 
 
 class TestExecuteBinary:
@@ -126,7 +126,7 @@ class TestExecuteBinary:
         result = execute_opportunity(MagicMock(), opp, size=50.0, paper_trading=False)
 
         assert result.fully_filled is True
-        assert result.order_ids == ["o1", "o2"]
+        assert result.order_ids == ("o1", "o2")
         assert mock_create.call_count == 2
         mock_post.assert_called_once()
 
@@ -366,7 +366,7 @@ class TestExecuteSingleLeg:
 
         result = execute_opportunity(MagicMock(), opp, size=100.0, paper_trading=False)
         assert result.fully_filled is True
-        assert result.order_ids == ["o1"]
+        assert result.order_ids == ("o1",)
         assert result.net_pnl > 0
 
     @patch("executor.engine.post_order")

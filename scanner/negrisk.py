@@ -10,7 +10,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from client.gas import GasOracle
-from scanner.depth import effective_price, sweep_depth, worst_fill_price
+from scanner.depth import effective_price, slippage_ceiling, sweep_depth, worst_fill_price
 from scanner.fees import MarketFeeModel
 from scanner.models import (
     BookFetcher,
@@ -43,6 +43,8 @@ def scan_negrisk_events(
     min_volume: float = 0.0,
     max_legs: int = 0,
     event_market_counts: dict[str, int] | None = None,
+    slippage_fraction: float = 0.4,
+    max_slippage_pct: float = 3.0,
 ) -> list[Opportunity]:
     """
     Scan all negRisk events for rebalancing arbitrage.
@@ -73,10 +75,17 @@ def scan_negrisk_events(
         # outcomes whose probability is priced into the gap between
         # sum(active asks) and $1.00.  Treating that gap as arb is a false
         # positive.
-        if event_market_counts:
+        if event_market_counts is not None:
             nrm_key = event.neg_risk_market_id or event.event_id
             expected_total = event_market_counts.get(nrm_key, 0)
-            if expected_total > 0 and len(active_markets) < expected_total:
+            if expected_total == 0:
+                # Unknown completeness -- skip conservatively to avoid false positives
+                logger.debug(
+                    "SKIP %s: unknown market count for neg_risk_market_id=%s (expected_total=0)",
+                    event.title[:50], nrm_key,
+                )
+                continue
+            if len(active_markets) < expected_total:
                 logger.debug(
                     "SKIP incomplete outcome group %s: have %d/%d markets (inactive outcomes exist)",
                     event.title[:50], len(active_markets), expected_total,
@@ -119,6 +128,7 @@ def scan_negrisk_events(
             min_profit_usd, min_roi_pct,
             gas_per_order, gas_price_gwei,
             gas_oracle=gas_oracle, fee_model=fee_model,
+            slippage_fraction=slippage_fraction, max_slippage_pct=max_slippage_pct,
         )
         if opp:
             opportunities.append(opp)
@@ -128,6 +138,7 @@ def scan_negrisk_events(
             min_profit_usd, min_roi_pct,
             gas_per_order, gas_price_gwei,
             gas_oracle=gas_oracle, fee_model=fee_model,
+            slippage_fraction=slippage_fraction, max_slippage_pct=max_slippage_pct,
         )
         if opp:
             opportunities.append(opp)
@@ -146,6 +157,8 @@ def _check_buy_all_arb(
     gas_price_gwei: float,
     gas_oracle: GasOracle | None = None,
     fee_model: MarketFeeModel | None = None,
+    slippage_fraction: float = 0.4,
+    max_slippage_pct: float = 3.0,
 ) -> Opportunity | None:
     """
     Buy one YES share in every outcome of a negRisk event.
@@ -156,20 +169,29 @@ def _check_buy_all_arb(
     if len(active_markets) < 2:
         return None  # Need at least 2 active outcomes for multi-outcome arb
 
-    ask_prices: list[tuple[Market, float, float]] = []  # (market, price, depth)
-
+    # First pass: collect best-ask prices for edge calculation
+    best_asks: list[tuple[Market, float]] = []
     for market in active_markets:
         book = books.get(market.yes_token_id)
         if not book or not book.best_ask:
-            return None  # Can't price all legs -- skip entire event
-        # Depth-aware: available size within 0.5% above best ask
-        depth = sweep_depth(book, Side.BUY, max_price=book.best_ask.price * 1.005)
-        ask_prices.append((market, book.best_ask.price, depth))
+            return None
+        best_asks.append((market, book.best_ask.price))
 
     # Fast pre-check using best-level prices
-    total_cost = sum(price for _, price, _ in ask_prices)
+    total_cost = sum(price for _, price in best_asks)
     if total_cost >= 1.0:
         return None
+
+    # Edge-proportional slippage: wider edges tolerate more slippage
+    edge_pct = ((1.0 - total_cost) / total_cost) * 100.0
+
+    # Second pass: compute depth with edge-proportional ceiling
+    ask_prices: list[tuple[Market, float, float]] = []
+    for market, best_price in best_asks:
+        book = books[market.yes_token_id]
+        ceiling = slippage_ceiling(best_price, edge_pct, Side.BUY, slippage_fraction, max_slippage_pct)
+        depth = sweep_depth(book, Side.BUY, max_price=ceiling)
+        ask_prices.append((market, best_price, depth))
 
     max_sets = min(depth for _, _, depth in ask_prices)
     if max_sets <= 0:
@@ -268,6 +290,8 @@ def _check_sell_all_arb(
     gas_price_gwei: float,
     gas_oracle: GasOracle | None = None,
     fee_model: MarketFeeModel | None = None,
+    slippage_fraction: float = 0.4,
+    max_slippage_pct: float = 3.0,
 ) -> Opportunity | None:
     """
     Sell one YES share in every outcome of a negRisk event.
@@ -277,20 +301,28 @@ def _check_sell_all_arb(
     if len(active_markets) < 2:
         return None  # Need at least 2 active outcomes for multi-outcome arb
 
-    bid_prices: list[tuple[Market, float, float]] = []
-
+    # First pass: collect best-bid prices for edge calculation
+    best_bids: list[tuple[Market, float]] = []
     for market in active_markets:
         book = books.get(market.yes_token_id)
         if not book or not book.best_bid:
             return None
-        # Depth-aware: available size within 0.5% below best bid
-        depth = sweep_depth(book, Side.SELL, max_price=book.best_bid.price * 0.995)
-        bid_prices.append((market, book.best_bid.price, depth))
+        best_bids.append((market, book.best_bid.price))
 
-    # Fast pre-check using best-level prices
-    total_proceeds = sum(price for _, price, _ in bid_prices)
+    # Fast pre-check
+    total_proceeds = sum(price for _, price in best_bids)
     if total_proceeds <= 1.0:
         return None
+
+    # Edge-proportional slippage
+    edge_pct = ((total_proceeds - 1.0) / 1.0) * 100.0
+
+    bid_prices: list[tuple[Market, float, float]] = []
+    for market, best_price in best_bids:
+        book = books[market.yes_token_id]
+        floor = slippage_ceiling(best_price, edge_pct, Side.SELL, slippage_fraction, max_slippage_pct)
+        depth = sweep_depth(book, Side.SELL, max_price=floor)
+        bid_prices.append((market, best_price, depth))
 
     max_sets = min(depth for _, _, depth in bid_prices)
     if max_sets <= 0:

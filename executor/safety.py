@@ -11,6 +11,18 @@ from dataclasses import dataclass, field
 from client.gas import GasOracle
 from scanner.depth import sweep_depth, sweep_cost
 from scanner.models import Opportunity, OpportunityType, Side, OrderBook
+from client.platform import PlatformClient
+
+logger = logging.getLogger(__name__)
+
+import logging
+import time
+from dataclasses import dataclass, field
+
+from client.gas import GasOracle
+from scanner.depth import sweep_depth, sweep_cost
+from scanner.models import Opportunity, OpportunityType, Side, OrderBook
+from client.platform import PlatformClient
 
 from client.data import PositionTracker
 
@@ -260,26 +272,26 @@ def verify_edge_intact(
     Recompute expected profit using fresh book data. If the edge has eroded
     below min_edge_ratio of the original estimate, abort.
     Raises SafetyCheckFailed if edge has deteriorated too much.
+
+    Uses VWAP (sweep_cost) instead of top-of-book for realistic cost estimation.
     """
     if opportunity.type in (
         OpportunityType.BINARY_REBALANCE,
         OpportunityType.NEGRISK_REBALANCE,
         OpportunityType.SPIKE_LAG,
     ):
-        # For buy-all arbs: recompute cost from fresh best asks
+        # For buy-all arbs: recompute cost using VWAP (sweep_cost for 1 set)
         fresh_cost = 0.0
         for leg in opportunity.legs:
             book = books.get(leg.token_id)
             if not book:
                 raise SafetyCheckFailed(f"No fresh book for {leg.token_id}")
-            if leg.side == Side.BUY:
-                if not book.best_ask:
-                    raise SafetyCheckFailed(f"No ask in fresh book for {leg.token_id}")
-                fresh_cost += book.best_ask.price
-            else:
-                if not book.best_bid:
-                    raise SafetyCheckFailed(f"No bid in fresh book for {leg.token_id}")
-                fresh_cost += book.best_bid.price
+            try:
+                # Use sweep_cost for VWAP-based cost (1 set = 1.0 shares)
+                leg_cost = sweep_cost(book, leg.side, 1.0)
+                fresh_cost += leg_cost
+            except ValueError as e:
+                raise SafetyCheckFailed(f"Insufficient depth for {leg.token_id}: {e}")
 
         if opportunity.legs[0].side == Side.BUY:
             fresh_profit_per_set = 1.0 - fresh_cost
@@ -304,21 +316,25 @@ def verify_edge_intact(
         return
 
     if opportunity.type == OpportunityType.CROSS_PLATFORM_ARB:
-        # Reconstruct fresh synthetic basket cost:
+        # Reconstruct fresh synthetic basket cost using VWAP:
         # BUY leg contributes ask; SELL leg contributes (1 - bid) of complement.
         fresh_cost = 0.0
         for leg in opportunity.legs:
             book = books.get(leg.token_id)
             if not book:
                 raise SafetyCheckFailed(f"No fresh book for {leg.token_id}")
-            if leg.side == Side.BUY:
-                if not book.best_ask:
-                    raise SafetyCheckFailed(f"No ask in fresh book for {leg.token_id}")
-                fresh_cost += book.best_ask.price
-            else:
-                if not book.best_bid:
-                    raise SafetyCheckFailed(f"No bid in fresh book for {leg.token_id}")
-                fresh_cost += 1.0 - book.best_bid.price
+            try:
+                if leg.side == Side.BUY:
+                    # Use VWAP cost for 1 set
+                    leg_cost = sweep_cost(book, Side.BUY, 1.0)
+                    fresh_cost += leg_cost
+                else:
+                    # For SELL leg: compute VWAP proceeds from (1 - bid) formula
+                    # We need to sweep the book and apply (1 - price) transformation
+                    leg_proceeds = sweep_cost(book, Side.SELL, 1.0)
+                    fresh_cost += 1.0 - leg_proceeds
+            except ValueError as e:
+                raise SafetyCheckFailed(f"Insufficient depth for {leg.token_id}: {e}")
 
         fresh_profit_per_set = 1.0 - fresh_cost
         if fresh_profit_per_set <= 0:
@@ -339,7 +355,7 @@ def verify_edge_intact(
         return
 
     if opportunity.type == OpportunityType.LATENCY_ARB:
-        # Latency arbs are single-leg directional edges; degrade edge by adverse top-of-book move.
+        # Latency arbs are single-leg directional edges; degrade edge by adverse VWAP move.
         if not opportunity.legs:
             raise SafetyCheckFailed("Latency opportunity has no legs")
         leg = opportunity.legs[0]
@@ -347,14 +363,20 @@ def verify_edge_intact(
         if not book:
             raise SafetyCheckFailed(f"No fresh book for {leg.token_id}")
 
+        try:
+            # Use VWAP instead of top-of-book for adverse move calculation
+            fresh_vwap_cost = sweep_cost(book, leg.side, 1.0)
+            # VWAP gives us total cost for 1 set, which equals the average price
+            fresh_vwap = fresh_vwap_cost  # For 1 set, cost = average price
+        except ValueError as e:
+            raise SafetyCheckFailed(f"Insufficient depth for {leg.token_id}: {e}")
+
         if leg.side == Side.BUY:
-            if not book.best_ask:
-                raise SafetyCheckFailed(f"No ask in fresh book for {leg.token_id}")
-            adverse_move = max(0.0, book.best_ask.price - leg.price)
+            # For BUY: adverse move is how much the VWAP ask increased
+            adverse_move = max(0.0, fresh_vwap - leg.price)
         else:
-            if not book.best_bid:
-                raise SafetyCheckFailed(f"No bid in fresh book for {leg.token_id}")
-            adverse_move = max(0.0, leg.price - book.best_bid.price)
+            # For SELL: adverse move is how much the VWAP bid decreased
+            adverse_move = max(0.0, leg.price - fresh_vwap)
 
         fresh_profit_per_set = opportunity.expected_profit_per_set - adverse_move
         if fresh_profit_per_set <= 0:
@@ -457,3 +479,26 @@ def verify_cross_platform_books(
                 f"Insufficient depth for {leg.token_id} on {leg.platform or 'polymarket'}: "
                 f"have {available:.1f} need {min_depth:.1f}"
             )
+
+
+def verify_platform_limits(
+    platform: str,
+    position_value: float,
+    kalshi_limit: float = 25000.0,
+    fanatics_limit: float = 25000.0,
+) -> None:
+    """
+    Verify position value is within platform-specific limits.
+
+    Raises SafetyCheckFailed if position would exceed platform limit.
+    """
+    limits = {
+        "kalshi": kalshi_limit,
+        "fanatics": fanatics_limit,
+    }
+
+    limit = limits.get(platform)
+    if limit is not None and position_value > limit:
+        raise SafetyCheckFailed(
+            f"Position value ${position_value:.2f} exceeds {platform} limit of ${limit:.2f}"
+        )

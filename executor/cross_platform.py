@@ -10,13 +10,23 @@ Generalized for N platforms: determines external platform from leg metadata.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from pathlib import Path
 
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import OrderType
 
 from client.clob import create_limit_order, post_order
+from client.platform import PlatformClient
+from executor.fill_state import (
+    FillState,
+    can_transition_to,
+    transition_to,
+    is_terminal_state,
+    is_final_state,
+)
 from scanner.models import (
     LegOrder,
     Opportunity,
@@ -29,10 +39,52 @@ logger = logging.getLogger(__name__)
 # Conservative estimate: 1 cent spread + fees per contract on unwind
 _UNWIND_LOSS_PER_CONTRACT = 0.02
 
+# State machine retry config
+_MAX_UNWIND_RETRIES = 3
+_UNWIND_BACKOFF_SEC = 0.5
+_STUCK_POSITIONS_FILE = "stuck_positions.json"
+
 
 class CrossPlatformUnwindFailed(Exception):
     """Raised when cross-platform unwind fails. Stuck positions on one platform."""
     pass
+
+
+def _persist_stuck(position_data: dict) -> None:
+    """Persist a stuck position to stuck_positions.json."""
+    try:
+        stuck_file = Path(_STUCK_POSITIONS_FILE)
+        existing = []
+        if stuck_file.exists():
+            try:
+                existing = json.loads(stuck_file.read_text())
+            except (json.JSONDecodeError, IOError):
+                existing = []
+
+        all_positions = existing + [position_data]
+        stuck_file.write_text(json.dumps(all_positions, indent=2))
+        logger.info("Persisted stuck position: %s @ %s", position_data.get("ticker"), position_data.get("platform"))
+    except Exception as e:
+        logger.error("Failed to persist stuck position: %s", e)
+
+
+def _load_stuck_positions() -> list[dict]:
+    """Load stuck positions from previous run on startup."""
+    try:
+        stuck_file = Path(_STUCK_POSITIONS_FILE)
+        if stuck_file.exists():
+            positions = json.loads(stuck_file.read_text())
+            if positions:
+                logger.warning(
+                    "Found %d stuck position(s) from previous run: %s",
+                    len(positions), _STUCK_POSITIONS_FILE,
+                )
+                for pos in positions:
+                    logger.warning("  Stuck: %s %s @ %s", pos["ticker"], pos["side"], pos["platform"])
+                return positions
+    except Exception as e:
+        logger.error("Failed to read stuck positions: %s", e)
+    return []
 
 
 def _dollars_to_cents(price: float) -> int:
@@ -45,7 +97,7 @@ def _dollars_to_cents(price: float) -> int:
 
 def execute_cross_platform(
     pm_client: ClobClient,
-    platform_clients: dict[str, object],
+    platform_clients: dict[str, PlatformClient],
     opportunity: Opportunity,
     size: float,
     paper_trading: bool = False,
@@ -78,9 +130,9 @@ def execute_cross_platform(
         logger.info("Cross-platform execution skipped: requested size %.4f rounds to 0 contracts", size)
         return TradeResult(
             opportunity=opportunity,
-            order_ids=[],
-            fill_prices=[],
-            fill_sizes=[],
+            order_ids=(),
+            fill_prices=(),
+            fill_sizes=(),
             fees=0.0,
             gas_cost=0.0,
             net_pnl=0.0,
@@ -163,9 +215,9 @@ def execute_cross_platform(
 
         return TradeResult(
             opportunity=opportunity,
-            order_ids=order_ids,
-            fill_prices=fill_prices,
-            fill_sizes=fill_sizes,
+            order_ids=tuple(order_ids),
+            fill_prices=tuple(fill_prices),
+            fill_sizes=tuple(fill_sizes),
             fees=0.0,
             gas_cost=0.0,
             net_pnl=0.0,
@@ -199,11 +251,14 @@ def execute_cross_platform(
 
     for leg in pm_legs:
         try:
+            from executor.tick_size import quantize_price
+            tick_size = float(leg.tick_size) if hasattr(leg, 'tick_size') and leg.tick_size else 0.01
+            quantized_price = quantize_price(leg.price, tick_size)
             signed = create_limit_order(
                 pm_client,
                 token_id=leg.token_id,
                 side=leg.side,
-                price=leg.price,
+                price=quantized_price,
                 size=float(exec_size),
                 neg_risk=False,
             )
@@ -317,7 +372,7 @@ def _wait_for_ext_fill(
 
 
 def _unwind_platform(
-    ext_client: object,
+    ext_client: PlatformClient,
     platform: str,
     ext_legs: list[LegOrder],
     size: float,
@@ -326,28 +381,53 @@ def _unwind_platform(
     Unwind external platform positions by placing opposite market orders.
     Returns estimated unwind loss in dollars.
     Raises CrossPlatformUnwindFailed if any unwind fails.
+    Implements retry logic: 3 attempts with 0.5s backoff.
     """
     stuck: list[dict] = []
     total_unwind_loss = 0.0
 
-    for leg in ext_legs:
-        opposite_action = "sell" if leg.side == Side.BUY else "buy"
-        try:
-            ext_client.place_order(
-                ticker=leg.token_id,
-                side="yes",
-                action=opposite_action,
-                count=int(size),
-                type="market",
-            )
-            total_unwind_loss += _UNWIND_LOSS_PER_CONTRACT * size
-            logger.info("Unwound %s position: %s %s %d", platform, opposite_action, leg.token_id, int(size))
-        except Exception as e:
-            logger.error("Failed to unwind %s %s: %s", platform, leg.token_id, e)
-            total_unwind_loss += leg.price * size
-            stuck.append({"ticker": leg.token_id, "side": leg.side.value, "size": size, "error": str(e)})
+    for attempt in range(_MAX_UNWIND_RETRIES):
+        for leg in ext_legs:
+            opposite_action = "sell" if leg.side == Side.BUY else "buy"
+            try:
+                ext_client.place_order(
+                    ticker=leg.token_id,
+                    side="yes",
+                    action=opposite_action,
+                    count=int(size),
+                    type="market",
+                )
+                total_unwind_loss += _UNWIND_LOSS_PER_CONTRACT * size
+                logger.info("Unwound %s position: %s %s %d (attempt %d/%d)",
+                                  platform, opposite_action, leg.token_id, int(size),
+                                  attempt + 1, _MAX_UNWIND_RETRIES)
+                # Unwind successful - exit retry loop
+                return total_unwind_loss
+            except Exception as e:
+                logger.warning("Unwind attempt %d/%d failed for %s: %s",
+                                 attempt + 1, _MAX_UNWIND_RETRIES, leg.token_id, e)
+                # Backoff before next retry
+                if attempt < _MAX_UNWIND_RETRIES - 1:
+                    time.sleep(_UNWIND_BACKOFF_SEC * (2 ** attempt))
+                # Last attempt - mark as stuck
+                if attempt == _MAX_UNWIND_RETRIES - 1:
+                    logger.error("Failed to unwind %s after %d attempts: %s",
+                                   leg.token_id, _MAX_UNWIND_RETRIES, e)
+                    total_unwind_loss += leg.price * size
+                    stuck.append({
+                        "ticker": leg.token_id,
+                        "side": leg.side.value,
+                        "size": size,
+                        "platform": platform,
+                        "error": str(e),
+                        "attempts": attempt + 1,
+                    })
 
     if stuck:
+        # Persist stuck positions before raising
+        for pos in stuck:
+            _persist_stuck(pos)
+
         raise CrossPlatformUnwindFailed(
             f"Failed to unwind {len(stuck)} {platform} position(s): {stuck}"
         )

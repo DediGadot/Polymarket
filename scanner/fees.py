@@ -44,6 +44,10 @@ class MarketFeeModel:
 
     enabled: bool = True
 
+    def is_dcm_market(self, market: Market) -> bool:
+        """Detect if market is a DCM (Daily Crypto Market) with 10bps fee."""
+        return market.min_tick_size == "0.001"
+
     def is_crypto_15min(self, market: Market) -> bool:
         """Detect if market is a 15-minute crypto prediction market."""
         return any(p.search(market.question) for p in _CRYPTO_15MIN_PATTERNS)
@@ -58,6 +62,10 @@ class MarketFeeModel:
 
         if self.is_crypto_15min(market):
             return self._dynamic_crypto_fee(price)
+
+        # DCM markets: 10bps (0.10%) flat taker fee
+        if self.is_dcm_market(market):
+            return DCM_FEE_RATE
 
         # Standard markets: zero fee
         return 0.0

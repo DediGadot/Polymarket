@@ -51,7 +51,10 @@ class KalshiAuth:
         message = f"{timestamp_ms}{method.upper()}{path}"
         signature = self._private_key.sign(
             message.encode("utf-8"),
-            padding.PKCS1v15(),
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.DIGEST_LENGTH,
+            ),
             hashes.SHA256(),
         )
         sig_b64 = base64.b64encode(signature).decode("utf-8")

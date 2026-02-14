@@ -1,229 +1,213 @@
-# Task Plan: Surgical & Modular Implementation of All Improvements
+# Task Plan: 10 Profit-Maximization Fixes
 
-**Created:** 2026-02-13
-**Goal:** Implement all 24 unified improvements from the 5-agent deep inspection + IDEAS.md, using surgical, modular changes that can be merged independently.
+**Created:** 2026-02-14
+**Builds on:** Session 2 (25 foundational items, 834 tests passing)
+**Goal:** Implement 10 changes that unlock maximum revenue from the existing pipeline — fix throttled parameters, widen scanning aperture, and add 4 new revenue-generating scanner modules. Success = all implemented, tested, and pipeline finds every viable opportunity.
 
-**Principles:**
-- Each phase produces a working, testable codebase
-- No phase depends on a later phase (strict topological order)
-- Each item is a single PR-sized diff (< 400 lines changed)
-- Every change includes tests proving correctness
-- Zero mutations to existing passing tests (unless fixing a bug in the test itself)
+## Current Phase
+Phase 1
+
+## Phases
+
+### Phase 1: Unlock Existing Pipeline (Quick Wins)
+**Theme:** Fix parameters and thresholds that are artificially choking the pipeline. No new modules, just tuning.
+
+#### 1.1 — Fix gas threshold in strategy selector (Polygon != Ethereum)
+- **Files:** `scanner/strategy.py`
+- **Problem:** `HIGH_GAS_GWEI = 100.0` triggers CONSERVATIVE mode on Polygon, where 100 gwei costs ~$0.003 per order. The threshold was designed for Ethereum-era gas costs.
+- **Fix:** Change to dollar-denominated gas thresholds. Add `gas_cost_usd` to `MarketState`. AGGRESSIVE when gas < $0.01/order, CONSERVATIVE when gas > $0.10/order. Fall back to gwei thresholds only when gas oracle is unavailable.
+- **Tests:** Unit tests for each strategy mode with Polygon-realistic gas prices (30-500 gwei at $0.50 POL). Verify AGGRESSIVE is selected at 100 gwei on Polygon. Verify CONSERVATIVE only at extreme gas ($0.10+/order).
+- [ ] Not started
+
+#### 1.2 — Raise Kelly odds defaults for confirmed arbs
+- **Files:** `config.py`, `executor/sizing.py`, `.env.example`, `tests/test_sizing.py`
+- **Problem:** `kelly_odds_confirmed = 0.10` (10:1 implied). For confirmed arbs where YES+NO < $1, fill probability is ~85-95%. Current setting deploys only ~23% of available capital.
+- **Fix:** Change default `kelly_odds_confirmed` from 0.10 to 0.65 (reflecting ~85% fill probability). Change `kelly_odds_cross_platform` from 0.20 to 0.40 (reflecting ~70% fill probability with execution risk). Update .env.example.
+- **Tests:** Update existing sizing tests with new default values. Add test verifying capital deployment is 40-60% for confirmed arbs (vs previous 15-25%).
+- [ ] Not started
+
+#### 1.3 — Edge-proportional slippage ceiling
+- **Files:** `scanner/binary.py`, `scanner/negrisk.py`, `scanner/cross_platform.py`, `config.py`
+- **Problem:** Hardcoded `1.005` (0.5%) slippage ceiling in all scanners. For a 5% edge arb, accepting 2% slippage still leaves 3% profit. But we only see depth within 0.5%, missing 80%+ of available liquidity.
+- **Fix:** Replace `best_ask.price * 1.005` with `best_ask.price * (1 + min(edge * slippage_fraction, max_slippage))`. Add `slippage_fraction: float = 0.4` and `max_slippage_pct: float = 3.0` to config. For 5% edge: accept up to 2% slippage. For 2% edge: accept up to 0.8%.
+- **Tests:** Test with multi-level orderbook: verify at 5% edge, depth includes levels up to 2% above best ask. Verify at 1% edge, ceiling is tighter. Verify max_slippage caps the ceiling.
+- [ ] Not started
+
+#### 1.4 — Scale exposure limits + remove min_hours filter
+- **Files:** `config.py`, `.env.example`
+- **Problem:** `max_exposure_per_trade = $500`, `max_total_exposure = $5,000` cap profit at the source. `min_hours_to_resolution = 1.0` blocks near-resolution opportunities.
+- **Fix:** Change defaults: `max_exposure_per_trade = $5,000`, `max_total_exposure = $50,000`, `min_hours_to_resolution = 0.0`. Update .env.example with comments explaining the reasoning.
+- **Tests:** Verify sizing function deploys up to new limits. Verify filter passes markets resolving in <1 hour.
+- [ ] Not started
+
+#### 1.5 — Verify ArbTracker integration is live (integration test)
+- **Files:** `tests/test_run.py` or new `tests/test_integration_pipeline.py`
+- **Problem:** Previous session "wired" ArbTracker into run.py, but need to verify confidence flows through scoring end-to-end.
+- **Fix:** Write integration test: create 2 cycles of opportunities for the same event. Verify cycle 1 gets confidence < 1.0, cycle 2 gets confidence = 1.0 (persistent). Verify scored rank changes.
+- **Tests:** Integration test as described above.
+- [ ] Not started
+
+- **Status:** pending
+
+**Phase 1 exit criteria:** `--dry-run` finds 2-5x more opportunities than before. Strategy shows AGGRESSIVE mode on Polygon gas. Kelly deploys 40-60% of capital for confirmed arbs.
 
 ---
 
-## Phase 1: Data Integrity Foundation (CRITICAL — do before any live trading)
+### Phase 2: Maker Strategy Scanner (NEW Revenue Stream)
+**Theme:** Stop paying the spread — earn it. Post passive orders on both sides of deep markets.
 
-**Theme:** Ensure the bot cannot lose money from bad data, thread bugs, or self-disabling behavior.
-
-### 1.1 — Validate all orderbook/price data at ingestion boundaries
-- **Files:** New `scanner/validation.py`, edit `client/clob.py`, `client/kalshi.py`, `scanner/book_cache.py`, `client/ws.py`, `scanner/latency.py`, `client/gas.py`
-- **Approach:** Create a single `scanner/validation.py` module with `validate_price(p, context)`, `validate_size(s, context)`, `validate_gas_gwei(g)`. Import and call at every `float()` conversion from external data. Raises `ValueError` on `NaN`, `Inf`, negative, or out-of-range values.
-- **Tests:** `tests/test_validation.py` — NaN, Inf, negative, >1.0, exactly 0.0, exactly 1.0, normal values. Integration: mock API returning bad data, verify pipeline rejects it.
-- **Risk:** Low. Pure additive. Worst case: rejects a valid edge case we haven't seen yet (and we log it).
+#### 2.1 — Design scanner/maker.py
+- **Files:** New `scanner/maker.py`
+- **Approach:** For each binary market with sufficient volume and spread > 1 tick:
+  - Compute the "maker edge": if we post YES bid and NO bid such that combined cost < $1
+  - E.g., YES bid at $0.48, NO bid at $0.50 → cost = $0.98 → $0.02 edge if both fill
+  - Target combined cost of $0.995-$0.998 for deep markets, $0.990-$0.995 for thin markets
+  - Size each side based on minimum depth at target price level
+  - Emit Opportunity with OpportunityType.MAKER_REBALANCE
+  - Need GTC order management (not FAK) — post and wait
+  - Stale order cancellation: cancel unfilled orders after N seconds or if prices move
+- **Key design:** This scanner produces PENDING opportunities that require lifecycle management (post → monitor → cancel/fill). Different from instant-fill arbs.
+- **Tests:** Unit tests for edge calculation, maker pricing, size computation. Mock orderbook tests. Test cancellation logic.
 - [ ] Not started
 
-### 1.2 — Fix NegRisk completeness bypass when event_market_counts returns 0
-- **Files:** Edit `scanner/negrisk.py:76-83`
-- **Approach:** When `expected_total == 0` for a NegRisk event, treat it as "unknown completeness" and skip the event (conservative). Add a log warning. Alternatively, derive count from the markets list itself as a fallback.
-- **Tests:** Add test case with `event_market_counts = {}` and verify the event is skipped.
-- **Risk:** Low. Conservative change — may skip some valid events, but prevents catastrophic loss.
+#### 2.2 — Maker order lifecycle manager
+- **Files:** New `executor/maker_lifecycle.py`
+- **Approach:** Track posted maker orders. On each cycle: check fills, cancel stale orders, repost at better prices if spread moved. Integrate with PnLTracker for fill events.
+- **Tests:** Test state transitions: POSTED → FILLED, POSTED → CANCELLED → REPOSTED, POSTED → STALE → CANCELLED.
 - [ ] Not started
 
-### 1.3 — Replace asyncio.Queue with queue.Queue + bound WS queues
-- **Files:** Edit `client/ws.py:46-47`, `client/ws_bridge.py` (drain logic)
-- **Approach:** `import queue`; replace `asyncio.Queue` with `queue.Queue(maxsize=10000)`. In WS handler, catch `queue.Full` and log warning (drop oldest or newest). Drain loop uses `queue.Queue.get_nowait()` (same API).
-- **Tests:** `tests/test_ws_bridge.py` — verify drain works with `queue.Queue`, verify `Full` is handled gracefully.
-- **Risk:** Low. Drop-in replacement. Same `put_nowait()`/`get_nowait()` API.
+#### 2.3 — Integrate maker into run.py
+- **Files:** `run.py`, `scanner/models.py` (add MAKER_REBALANCE to OpportunityType), `executor/engine.py`
+- **Approach:** Add maker scan phase after arb scanning. Maker runs independently — doesn't compete with arbs for capital. Use separate exposure bucket `max_maker_exposure`.
+- **Tests:** Integration test: full pipeline with maker enabled finds maker opportunities on wide-spread markets.
 - [ ] Not started
 
-### 1.4 — Fix BookCache get_book()/get_books() to acquire the lock
-- **Files:** Edit `scanner/book_cache.py:107-113`
-- **Approach:** Add `with self._lock:` to `get_book()` and `get_books()`. Consider deprecating `get_books_snapshot()` since `get_books()` now acquires the lock.
-- **Tests:** Existing `tests/test_book_cache.py` should still pass. Add a test that calls `get_books()` for multiple tokens and verifies consistency.
-- **Risk:** Low. May add ~microseconds of lock contention. Single-reader model means no contention in practice.
-- [ ] Not started
+- **Status:** pending
 
-### 1.5 — Fix exposure tracking: decrement on resolution/unwind
-- **Files:** Edit `monitor/pnl.py`
-- **Approach:** Add `reduce_exposure(amount: float)` method. Call it from: (a) `record()` when trade is a sell/unwind, (b) new `record_resolution(token_id, payout)` method for resolved positions. In `record()`, if any leg is `Side.SELL`, decrement exposure by `sell_notional`.
-- **Tests:** `tests/test_pnl.py` — buy $100, verify exposure=100. Sell $50, verify exposure=50. Buy again, verify exposure doesn't exceed realistic bounds.
-- **Risk:** Low. Pure additive to PnLTracker. No change to existing record() signature.
-- [ ] Not started
-
-### 1.6 — Make Config frozen + use model_copy pattern
-- **Files:** Edit `config.py` (add `frozen=True`), edit `run.py:121-128,194-195`
-- **Approach:** Add `model_config = SettingsConfigDict(env_file=".env", frozen=True)` to Config. Change `_enforce_polymarket_only_mode(cfg) -> Config` to return `cfg.model_copy(update={...})`. Change `run.py:194` to `cfg = cfg.model_copy(update={"paper_trading": False})`.
-- **Tests:** Existing tests that mutate Config will need `model_copy()` instead. Add test that Config raises on direct mutation.
-- **Risk:** Medium. Any other code mutating Config will break (by design — that's the point). Grep for `cfg.` assignments.
-- [ ] Not started
-
-**Phase 1 exit criteria:** All 6 items pass tests. `--dry-run` and `--scan-only` modes work. No regressions in existing 696 tests.
+**Phase 2 exit criteria:** Maker scanner identifies opportunities on wide-spread markets. Lifecycle manager tracks order state. GTC orders post and cancel correctly in paper mode.
 
 ---
 
-## Phase 2: Stop Bleeding Money (HIGH — unwind, risk controls, tick precision)
+### Phase 3: Resolution Sniping Scanner (NEW Revenue Stream)
+**Theme:** Buy the winning side of nearly-resolved markets at < $1.
 
-**Theme:** Ensure execution failures are handled deterministically and risk controls are enforced.
-
-### 2.1 — Cross-platform fill state machine with unwind retry
-- **Files:** New `executor/fill_state.py`, edit `executor/cross_platform.py`
-- **Approach:** Define `FillState` enum: `PENDING, FILLED, PARTIAL, REJECTED, RESTING, UNWINDING, UNWOUND, STUCK`. Replace the linear if/else in `execute_cross_platform()` with state transitions. Add retry (3 attempts, 0.5s backoff) to `_unwind_platform()`. Persist stuck positions to `stuck_positions.json`. On startup, check for and log stuck positions.
-- **Tests:** `tests/test_fill_state.py` — state transitions, retry on unwind failure, stuck position persistence. Extend `tests/test_cross_platform_exec.py` with cascading failure scenario.
-- **Risk:** Medium. Most complex change. Isolate in new module to minimize blast radius.
+#### 3.1 — Design scanner/resolution.py
+- **Files:** New `scanner/resolution.py`
+- **Approach:** For markets within 0-60 minutes of resolution:
+  - Check if outcome is publicly determinable (sports scores via free APIs, election results, etc.)
+  - If YES is priced at < $0.97 and outcome is confirmed YES → buy YES (profit = $1 - price)
+  - If NO is priced at < $0.97 and outcome is confirmed NO → buy NO
+  - For markets where outcome is unknown: skip
+  - Conservative approach: only snipe when price < $0.95 (5%+ edge) and resolution is < 30 min away
+  - Use external data sources: sports scores (ESPN API), crypto prices (Binance), public data
+- **Risk model:** Resolution sniping is nearly risk-free when outcome is confirmed. Kelly odds should be 0.95+.
+- **Tests:** Mock market at $0.90 YES with confirmed outcome → verify opportunity emitted. Mock unresolved market → verify skip. Test edge cases: partially resolved, disputed.
 - [ ] Not started
 
-### 2.2 — Wire unused runtime risk controls end-to-end (IDEAS #1)
-- **Files:** Edit `run.py`, `executor/cross_platform.py`, `executor/safety.py`
-- **Approach:** (a) Pass `cfg.cross_platform_deadline_sec` into `execute_cross_platform()` and enforce it. (b) Add `verify_platform_limits(platform, position, cfg)` to safety.py. (c) Respect `cfg.*_enabled` toggles in the scan phase (some are already respected; verify all).
-- **Tests:** Add tests proving: deadline exceeded -> abort + unwind, platform limit hit -> skip, disabled platform -> skip.
-- **Risk:** Low. Wiring existing config fields to existing code paths.
+#### 3.2 — External outcome oracle
+- **Files:** New `scanner/outcome_oracle.py`
+- **Approach:** Modular outcome resolver. For sports: check live scores. For crypto: check current price vs threshold. For elections: check AP/Reuters feed. Returns `OutcomeStatus`: CONFIRMED_YES, CONFIRMED_NO, UNKNOWN, DISPUTED.
+- **Tests:** Mock API responses for each data source. Verify correct status for each scenario.
 - [ ] Not started
 
-### 2.3 — Enforce market tick-size precision at execution (IDEAS #3)
-- **Files:** New `executor/tick_size.py`, edit `executor/engine.py`, `executor/cross_platform.py`
-- **Approach:** Create `quantize_price(price: float, tick_size: float) -> float` that rounds to nearest valid tick. Call before every `create_limit_order()` and `place_order()`. Reject orders where quantization changes price by more than `tick_size / 2`.
-- **Tests:** `tests/test_tick_size.py` — 0.01 markets, 0.001 markets, round-up, round-down, rejection on large quantization shift.
-- **Risk:** Low. Pure pre-execution validation.
+#### 3.3 — Integrate into run.py
+- **Files:** `run.py`, `scanner/models.py` (add RESOLUTION_SNIPE to OpportunityType)
+- **Approach:** Add resolution scan as a separate phase that runs on near-expiry markets (those filtered OUT by the current `min_hours` filter). Use the newly-removed filter to feed markets TO this scanner instead of throwing them away.
+- **Tests:** Integration test verifying near-expiry markets flow to resolution scanner.
 - [ ] Not started
 
-### 2.4 — Type platform_clients as dict[str, PlatformClient] everywhere
-- **Files:** Edit `run.py:269`, `executor/engine.py:47`, `executor/cross_platform.py:117`
-- **Approach:** Replace `dict[str, object]` with `dict[str, PlatformClient]`. Import from `client/platform.py`. Move price conversion into each platform client (Kalshi converts to cents internally, not in executor).
-- **Tests:** Existing tests pass. Add mypy/pyright check to CI (Phase 5).
-- **Risk:** Low. Type annotation change only. Price conversion move is a small refactor.
-- [ ] Not started
+- **Status:** pending
 
-### 2.5 — Freeze TradeResult + use tuples for fill data
-- **Files:** Edit `scanner/models.py:157`, edit callers that construct `TradeResult`
-- **Approach:** `@dataclass(frozen=True)`, change `fill_prices: list[float]` to `tuple[float, ...]`, same for `fill_sizes`. Update all constructors to pass tuples.
-- **Tests:** Existing tests adapted. Add test that `TradeResult` raises on mutation.
-- **Risk:** Low. Grep for `TradeResult(` and update constructors.
-- [ ] Not started
-
-**Phase 2 exit criteria:** Cross-platform unwind has retry + persistence. All config risk controls are wired. Tick-size validation active. `--dry-run` shows no regressions.
+**Phase 3 exit criteria:** Resolution scanner identifies snipeable near-expiry markets. Outcome oracle resolves sports/crypto outcomes correctly. Integration flows markets to the right scanner.
 
 ---
 
-## Phase 3: Make More Money (HIGH — latency, sizing, scoring)
+### Phase 4: Partial NegRisk Value Scanner (NEW Revenue Stream)
+**Theme:** Don't require buying ALL outcomes. Buy underpriced individual outcomes directionally.
 
-**Theme:** Reduce cycle time from 40-60s to <5s and deploy capital more effectively.
-
-### 3.1 — Cache Gamma API (60s TTL) + event market counts (5min TTL) + external get_all_markets
-- **Files:** New `client/cache.py`, edit `run.py`, `client/gamma.py`
-- **Approach:** Create a generic `TTLCache[T]` class in `client/cache.py` with `get(key, factory, ttl)`. Wrap `get_all_markets()`, `get_event_market_counts()`, and each platform's `get_all_markets()`. Call `cache.get("gamma_markets", lambda: get_all_markets(...), ttl=60)` in the main loop.
-- **Tests:** `tests/test_cache.py` — TTL expiry, stale return, factory error handling.
-- **Risk:** Low. Markets don't change second-by-second. Stale markets are filtered by `is_market_stale()`.
+#### 4.1 — Design scanner/value.py
+- **Files:** New `scanner/value.py`
+- **Approach:** For multi-outcome NegRisk events:
+  - Compute implied probabilities from current ask prices
+  - Identify outcomes where market probability is significantly below "fair" probability
+  - "Fair" probability estimation approaches:
+    a. Sum-normalization: if sum(asks) > 1.0 but one outcome is disproportionately cheap
+    b. Historical anchor: if outcome was at $0.30 yesterday and is now $0.05 with no news
+    c. Cross-event comparison: related events pricing the same outcome differently
+  - Emit single-leg BUY opportunities with DIRECTIONAL risk (not risk-free arbs)
+  - Size conservatively: use lower Kelly odds (0.30) since these aren't guaranteed arbs
+  - Minimum edge requirement: 10% (implied probability vs market price)
+- **Tests:** Test probability calculation from ask prices. Test edge detection. Test conservative sizing. Test that risk-free negrisk arbs (sum < 1) are NOT duplicated here (leave those to negrisk scanner).
 - [ ] Not started
 
-### 3.2 — Parallelize scanners + all book fetches
-- **Files:** Edit `run.py:452-591`, `client/kalshi.py:177-187`, `run.py:495-496`, `run.py:856-858`
-- **Approach:** (a) Wrap 5 scanner calls in `ThreadPoolExecutor(max_workers=5)` + `as_completed()`. (b) Add `max_workers` param to `KalshiClient.get_orderbooks()` using `ThreadPoolExecutor`. (c) Use `poly_book_fetcher` for latency scanner instead of serial `get_orderbooks`. (d) Batch safety-check book fetches for all scored opportunities.
-- **Tests:** Verify same results as serial execution. Add timing assertion that parallel is faster.
-- **Risk:** Medium. Scanner parallelism is safe (disjoint data). Kalshi parallelism needs rate-limit respect (4 workers = safe under 20 req/sec). Safety batch needs freshness guard.
+#### 4.2 — Integrate into run.py
+- **Files:** `run.py`, `scanner/models.py` (add NEGRISK_VALUE to OpportunityType), `executor/engine.py`
+- **Approach:** Value scanner runs on negrisk events where sum(asks) > 1.0 (i.e., no risk-free arb exists). Separate capital bucket. Lower priority in scorer than confirmed arbs.
+- **Tests:** Integration test verifying value scanner only activates on non-arb events.
 - [ ] Not started
 
-### 3.3 — Recalibrate Kelly sizing
-- **Files:** Edit `executor/sizing.py`
-- **Approach:** Replace hardcoded `odds = 1.0` with `odds` derived from arb type. For confirmed arbs (binary/negrisk), set `odds = 0.1` (10:1 implied, half-Kelly deploys ~15% of bankroll). For cross-platform, set `odds = 0.2` (accounting for execution risk). Make these configurable in `config.py`.
-- **Tests:** Update `tests/test_sizing.py` with new expected values. Verify half-Kelly at various fill probabilities.
-- **Risk:** Medium. Larger position sizes = more money at risk per trade. Start conservative (odds=0.2) and tune with live data.
-- [ ] Not started
+- **Status:** pending
 
-### 3.4 — Integrate ArbTracker persistence confidence into scoring (IDEAS #8)
-- **Files:** Edit `run.py` (instantiate `ArbTracker`), edit `run.py:_build_scoring_contexts()`
-- **Approach:** Create `ArbTracker()` during initialization. After scanning, call `arb_tracker.record(cycle, opps)`. In `_build_scoring_contexts()`, call `arb_tracker.confidence(opp.event_id, ...)` and set `ScoringContext.confidence`. The scorer already has `W_PERSISTENCE = 0.15` — it just needs real data.
-- **Tests:** `tests/test_confidence.py` should already exist. Add integration test verifying confidence flows through scoring.
-- **Risk:** Low. Wire existing code. Scorer weights already account for this factor.
-- [ ] Not started
-
-**Phase 3 exit criteria:** Cycle time <10s with caching. Kelly sizing deploys 5-15% of bankroll per confirmed arb. ArbTracker active in scoring. `--dry-run --limit 500` completes in <5s.
+**Phase 4 exit criteria:** Value scanner finds underpriced outcomes in multi-outcome events. Sizing is conservative. No overlap with existing negrisk scanner.
 
 ---
 
-## Phase 4: Improve Edge Accuracy (MEDIUM — fees, safety, matching, strategy)
+### Phase 5: Stale-Quote WS Sniping (NEW Revenue Stream)
+**Theme:** Exploit the 50-200ms information advantage from WebSocket price updates.
 
-**Theme:** Tighten the accuracy of profit estimation and risk assessment.
-
-### 4.1 — Correct fee-model realism for DCM and fee-bearing markets (IDEAS #4)
-- **Files:** Edit `scanner/fees.py`
-- **Approach:** Add DCM (Dynamic Cost Model) detection via market metadata. Implement actual taker fee schedule for DCM markets (fee increases toward 50/50 odds). Add "golden case" tests against manually computed fee examples from Polymarket docs.
-- **Tests:** `tests/test_fees.py` — golden cases at 10/90, 30/70, 50/50 odds for DCM markets.
-- **Risk:** Low. Tightens edge estimation = fewer but more profitable trades.
+#### 5.1 — Design scanner/stale_quote.py
+- **Files:** New `scanner/stale_quote.py`
+- **Approach:** When WS feed shows a significant price move (>3%) in one token:
+  - Immediately check the complementary token's book via REST
+  - If the complementary token hasn't moved yet (stale quote), the combined cost may be < $1
+  - This exploits the latency gap between WS updates and REST-polling competitors
+  - Emit opportunity with short TTL (must execute within 500ms or discard)
+  - Track "stale quote windows" — the average time between WS move and REST convergence
+  - Backoff if stale quote window is consistently < 100ms (bots are too fast, no edge)
+- **Key difference from spike scanner:** Spike scanner needs 2+ data points over 30 seconds. Stale quote sniping reacts to a single WS tick in < 100ms.
+- **Tests:** Mock WS update showing 5% move in YES token. Mock REST showing stale NO price. Verify opportunity emitted. Mock both updated (no stale) → verify no opportunity.
 - [ ] Not started
 
-### 4.2 — Use VWAP in verify_edge_intact (not top-of-book)
-- **Files:** Edit `executor/safety.py:306-339`
-- **Approach:** Import `sweep_cost` from `scanner/depth.py`. In `verify_edge_intact`, compute VWAP cost for the actual execution size instead of using `best_ask.price`. Pass the position size through to the safety check.
-- **Tests:** Add test with thin book where top-of-book shows edge but VWAP doesn't.
-- **Risk:** Low. More conservative = fewer trades but each is more reliably profitable.
+#### 5.2 — Fast-path integration into WS bridge
+- **Files:** `client/ws_bridge.py`, `scanner/book_cache.py`
+- **Approach:** Add callback in WS bridge: on significant price move, trigger stale-quote check immediately (not waiting for next scan cycle). This bypasses the 1-second scan interval for time-critical opportunities.
+- **Tests:** Test callback fires on >3% move. Test callback doesn't fire on <3% move. Test rate limiting (max 10 checks/second).
 - [ ] Not started
 
-### 4.3 — Upgrade cross-platform matching to contract-level (IDEAS #6)
-- **Files:** Edit `scanner/matching.py`
-- **Approach:** After event-level fuzzy match (existing), add a second pass: match individual outcomes/contracts by name. Add settlement-equivalence guards (e.g., "Over 2.5" != "Over 3.5"). Block execution when per-contract confidence < threshold.
-- **Tests:** Add test cases with same-event different-settlement contracts. Verify they're blocked.
-- **Risk:** Medium. More restrictive matching = fewer cross-platform opportunities, but each is safer.
-- [ ] Not started
+- **Status:** pending
 
-### 4.4 — Add epsilon-based comparisons for cost < 1.0 checks
-- **Files:** Edit `scanner/binary.py:115`, `scanner/negrisk.py` (similar locations)
-- **Approach:** Define `FLOAT_EPSILON = 1e-9` in `scanner/models.py`. Replace `cost_per_set >= 1.0` with `cost_per_set >= 1.0 - FLOAT_EPSILON`. Same for `<= 0.0` checks.
-- **Tests:** Add test with `yes_ask=0.49, no_ask=0.51` verifying arb IS detected.
-- **Risk:** Very low. One-line changes.
-- [ ] Not started
-
-### 4.5 — Strategy mode: gate AGGRESSIVE on avg P&L, not just win rate
-- **Files:** Edit `scanner/strategy.py:148-151`
-- **Approach:** Add `avg_pnl` to `MarketState`. Change condition to `state.recent_win_rate >= 0.50 and state.avg_pnl > 0`. Compute `avg_pnl` from PnLTracker's recent trades.
-- **Tests:** Add test: 50% win rate but negative avg P&L -> CONSERVATIVE mode.
-- **Risk:** Low. Purely additive gate condition.
-- [ ] Not started
-
-**Phase 4 exit criteria:** Fee model matches Polymarket docs for DCM markets. Safety checks use VWAP. Matching blocks different-settlement contracts. Float comparisons have epsilon. Strategy considers P&L magnitude.
+**Phase 5 exit criteria:** Stale quote scanner detects and acts on price divergences within 200ms. WS callback bypasses scan cycle for time-critical opportunities.
 
 ---
 
-## Phase 5: Code Health & Sustainability
+### Phase 6: Integration Testing & Pipeline Validation
+**Theme:** Verify the complete pipeline finds every viable opportunity.
 
-**Theme:** Testing, memory, maintainability, documentation.
-
-### 5.1 — Harden WebSocket health and failover (IDEAS #7)
-- **Files:** Edit `client/ws.py`, `client/ws_bridge.py`, `run.py` (scan phase)
-- **Approach:** (a) Add `last_message_time` tracking in WSManager. (b) Add `is_healthy(max_silence_sec=30)` method. (c) In scan phase, check `ws_bridge.is_connected` and `is_healthy()`. If unhealthy, skip spike scanner and log warning. (d) Add auto-restart on repeated failure.
-- **Tests:** Mock WS going silent, verify health check fires. Mock repeated failures, verify restart.
-- **Risk:** Low. Degradation to REST is safe (just slower).
+#### 6.1 — End-to-end dry-run validation
+- **Files:** `tests/test_pipeline_e2e.py`
+- **Approach:** Run full `--dry-run` with crafted mock data containing:
+  - 1 binary arb (YES+NO < $1)
+  - 1 negrisk arb (sum asks < $1, 5 outcomes)
+  - 1 near-resolution market (sports, confirmed outcome)
+  - 1 wide-spread market (maker opportunity)
+  - 1 underpriced negrisk outcome (value bet)
+  - 1 WS price spike with stale complementary quote
+  - Verify ALL 6 are detected and properly scored/sized
+- **Tests:** The test IS the deliverable.
 - [ ] Not started
 
-### 5.2 — Break up run.py + extract gas cost utility
-- **Files:** New `pipeline/init_clients.py`, `pipeline/scan_cycle.py`, `pipeline/exec_cycle.py`, new `scanner/gas_utils.py`. Edit `run.py`.
-- **Approach:** Extract `_init_platform_clients()`, `_run_scan_cycle()`, `_run_execution_cycle()` into separate modules under `pipeline/`. Extract gas cost fallback into `scanner/gas_utils.py` with `estimate_gas_cost(gas_oracle, n_legs, gas_per_order, gas_price_gwei) -> float`. Replace 4 duplicated blocks in scanners.
-- **Tests:** Existing tests pass with imports redirected. New `tests/test_gas_utils.py`.
-- **Risk:** Medium. Large refactor. Do after all functional changes are stable.
+#### 6.2 — Live dry-run performance benchmark
+- Run `--dry-run` with real market data. Measure:
+  - Opportunities found per cycle (target: 3-10x improvement over baseline)
+  - Cycle time (target: < 10s)
+  - Capital utilization (target: 40-60% of bankroll deployed)
+  - Strategy mode distribution (target: AGGRESSIVE > 70% of cycles on Polygon)
+- Document results in progress.md.
 - [ ] Not started
 
-### 5.3 — Add CI quality gates (IDEAS #9) + test critical untested paths
-- **Files:** New `.github/workflows/ci.yml`, new/expanded test files
-- **Approach:** (a) CI: `ruff check .`, `mypy .`, `pytest --cov=. --cov-fail-under=85`. (b) Write tests for 8 critical untested paths: `_filled_size_from_response`, negrisk partial fill, WS reconnect, cascading cross-platform failure, `_build_scoring_contexts`, `verify_edge_intact` latency, empty-legs through safety, `_dollars_to_cents` out-of-range. (c) Fix conditional assertions (`if len(...) >= 2:` -> `assert len(...) >= 2`).
-- **Tests:** The tests ARE the deliverable.
-- **Risk:** Low. Pure additive.
-- [ ] Not started
+- **Status:** pending
 
-### 5.4 — Fix memory leaks for long-running sessions
-- **Files:** Edit `monitor/scan_tracker.py`, `scanner/spike.py`, `scanner/book_cache.py`
-- **Approach:** (a) `ScanTracker`: cap `self.opportunities` to last N cycles (e.g., 100). (b) `SpikeDetector`: add `cleanup_stale(active_tokens: set[str])`, call per cycle. (c) `BookCache`: add `prune(max_age_sec=300)`, call per cycle.
-- **Tests:** Add tests verifying bounded memory after N cycles.
-- **Risk:** Low. Pruning stale data.
-- [ ] Not started
-
-### 5.5 — Fix documentation/config drift (IDEAS #10)
-- **Files:** Edit `CLAUDE.md`, new `.env.example`, edit `config.py`
-- **Approach:** Auto-generate `.env.example` from `Config` fields with defaults and descriptions. Sync CLAUDE.md scoring weights with actual `scorer.py` values. Verify all run modes documented match actual behavior.
-- **Tests:** N/A (documentation).
-- **Risk:** Very low.
-- [ ] Not started
-
-**Phase 5 exit criteria:** CI green with lint/type/test/coverage gates. Memory stable over simulated long runs. run.py under 300 lines. All docs accurate.
+**Phase 6 exit criteria:** E2E test passes with all 6 opportunity types detected. Live dry-run shows 3-10x improvement in opportunity detection.
 
 ---
 
@@ -231,32 +215,53 @@
 
 ```
 Phase 1 (all items independent, can parallelize)
-  |-- Phase 2 depends on: 1.1 (validation), 1.4 (BookCache), 1.6 (Config frozen)
-       |-- Phase 3 depends on: 2.1 (state machine), 2.4 (PlatformClient types)
-            |-- Phase 4 depends on: 3.1 (caching), 3.4 (confidence)
-                 |-- Phase 5 depends on: all functional changes stable
+  |-- Phase 2 depends on: 1.4 (exposure limits), 1.1 (strategy mode)
+  |-- Phase 3 depends on: 1.4 (min_hours removal feeds markets to resolution scanner)
+  |-- Phase 4 depends on: 1.3 (slippage ceiling for better depth)
+  |-- Phase 5 depends on: 1.1 (strategy mode for latency-sensitive ops)
+       |-- Phase 6 depends on: ALL prior phases complete
 ```
 
-Within each phase, items CAN be parallelized (independent PRs).
+Within phases 2-5, items CAN be parallelized (independent modules).
 
 ## Effort Estimate
 
-| Phase | Items | Lines | Sessions |
-|-------|-------|-------|----------|
-| 1     | 6     | ~400  | 1        |
-| 2     | 5     | ~600  | 1-2      |
-| 3     | 4     | ~500  | 1-2      |
-| 4     | 5     | ~400  | 1        |
-| 5     | 5     | ~800  | 2        |
-| **Total** | **25** | **~2,700** | **6-8** |
+| Phase | Items | Est. Lines | Description |
+|-------|-------|-----------|-------------|
+| 1     | 5     | ~300      | Parameter fixes + integration test |
+| 2     | 3     | ~500      | Maker strategy + lifecycle |
+| 3     | 3     | ~400      | Resolution sniping + outcome oracle |
+| 4     | 2     | ~300      | Partial negrisk value scanner |
+| 5     | 2     | ~350      | Stale-quote WS sniping |
+| 6     | 2     | ~200      | Integration tests + benchmark |
+| **Total** | **17** | **~2,050** | Full profit-max implementation |
 
-## Decision Log
+## Key Questions
+1. Should maker strategy use a separate capital bucket from arb trading? → **YES** — maker ties up capital for longer (GTC orders), shouldn't compete with instant arbs
+2. How aggressive should resolution sniping be? → **Conservative first** — only snipe confirmed outcomes with >5% edge. Expand later.
+3. Should partial negrisk bets have a separate risk limit? → **YES** — these are directional, not risk-free. Use 20% of max_total_exposure.
+4. What's the minimum profitable edge for stale-quote sniping? → **2%** after fees. Below this, the timing advantage isn't reliable enough.
 
-| Date | Decision | Rationale |
-|------|----------|-----------|
-| 2026-02-13 | Phase 1 first (data integrity) | Prevents catastrophic loss; all other work pointless if bad data can bankrupt the bot |
-| 2026-02-13 | State machine in `executor/fill_state.py` | Isolates complexity; cross_platform.py delegates to it |
-| 2026-02-13 | TTLCache as generic `client/cache.py` | Reusable across Gamma, event counts, and external platform calls |
-| 2026-02-13 | Kelly odds configurable, not hardcoded | Allows gradual tuning without code changes |
-| 2026-02-13 | run.py breakup deferred to Phase 5 | Functional changes first, structural refactor once behavior is stable |
-| 2026-02-13 | Validation in `scanner/validation.py` | Single import for all ingestion points; testable in isolation |
+## Decisions Made
+
+| Decision | Rationale |
+|----------|-----------|
+| Dollar-denominated gas thresholds | Polygon gwei != Ethereum gwei. $0.01/order is cheap regardless of gwei value |
+| Kelly odds 0.65 for confirmed arbs | Fill probability ~85%. Previous 0.10 deployed 5x too little capital |
+| Maker uses separate capital bucket | GTC orders tie up capital for seconds-minutes, shouldn't block instant arbs |
+| Resolution oracle is modular | Different data sources per market type. Easy to add new sources |
+| Value scanner sized at 0.30 Kelly odds | Directional risk, not guaranteed arb. Size conservatively |
+| Stale-quote TTL of 500ms | WS→REST convergence window is typically 200-500ms. Staler than that = already arbitraged |
+| Phase 1 all-parallel | All items independent. Maximum velocity. |
+
+## Errors Encountered
+
+| Error | Attempt | Resolution |
+|-------|---------|------------|
+| (none yet) | - | - |
+
+## Notes
+- Previous session baseline: 834 tests, 25 foundational items complete
+- All new scanners follow existing patterns: emit `Opportunity`, integrate via `run.py` scan loop
+- New `OpportunityType` values: MAKER_REBALANCE, RESOLUTION_SNIPE, NEGRISK_VALUE, STALE_QUOTE_ARB
+- Each new scanner is its own module — modular, testable, independently deployable

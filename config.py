@@ -7,7 +7,7 @@ from pydantic import Field
 
 
 class Config(BaseSettings):
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "frozen": True, "extra": "ignore"}
 
     # Credentials (required for paper/live trading, optional for dry-run)
     private_key: str = Field(default="", description="Polygon wallet private key (hex)")
@@ -25,8 +25,17 @@ class Config(BaseSettings):
     # Trading thresholds
     min_profit_usd: float = Field(default=0.50, gt=0)
     min_roi_pct: float = Field(default=2.0, gt=0)
-    max_exposure_per_trade: float = Field(default=500.0, gt=0)
-    max_total_exposure: float = Field(default=5000.0, gt=0)
+    # Maximum exposure per trade ($) — scale up as confidence builds
+    max_exposure_per_trade: float = Field(default=5000.0, gt=0)
+    # Maximum total portfolio exposure ($)
+    max_total_exposure: float = Field(default=50000.0, gt=0)
+
+    # Kelly sizing odds (probability of success for sizing calculation)
+    # For confirmed arbs (YES+NO < $1), fill probability is ~85-95%.
+    # 0.65 odds = 1.54:1 implied = ~65% win probability for Kelly sizing
+    kelly_odds_confirmed: float = Field(default=0.65, gt=0, le=1.0)  # Confirmed arb (high fill probability)
+    # Cross-platform arbs have higher execution risk (partial fills, platform failures)
+    kelly_odds_cross_platform: float = Field(default=0.40, gt=0, le=1.0)  # Cross-platform (higher execution risk)
 
     # Circuit breakers
     max_loss_per_hour: float = Field(default=50.0, gt=0)
@@ -66,7 +75,14 @@ class Config(BaseSettings):
 
     # Pre-filters
     min_volume_filter: float = Field(default=0.0, ge=0)
-    min_hours_to_resolution: float = Field(default=1.0, ge=0)
+    # Minimum hours until resolution (0.0 = allow near-resolution markets)
+    min_hours_to_resolution: float = Field(default=0.0, ge=0)
+
+    # Slippage ceiling for depth scanning
+    # Fraction of edge to allow as slippage (0.4 = accept up to 40% of edge as slippage)
+    slippage_fraction: float = Field(default=0.4, ge=0, le=1.0)
+    # Maximum slippage percentage regardless of edge
+    max_slippage_pct: float = Field(default=3.0, ge=0.1, le=10.0)
 
     # Depth Sweep + Latency Arb (Iteration 3)
     target_size_usd: float = 100.0
@@ -83,7 +99,7 @@ class Config(BaseSettings):
     # Kalshi Cross-Platform (Iteration 5)
     kalshi_api_key_id: str = ""
     kalshi_private_key_path: str = ""
-    kalshi_host: str = "https://trading-api.kalshi.com/trade-api/v2"
+    kalshi_host: str = "https://api.elections.kalshi.com/trade-api/v2"
     kalshi_demo: bool = False
     # Cross-platform arb enabled by default -- all configured platforms scanned.
     cross_platform_enabled: bool = True
@@ -92,6 +108,28 @@ class Config(BaseSettings):
     kalshi_position_limit: float = 25000.0
     cross_platform_deadline_sec: float = 5.0
     cross_platform_verified_path: str = "verified_matches.json"
+
+    # Value scanner (partial negrisk)
+    # Disabled by default: assumes uniform 1/N probability across outcomes,
+    # producing 100% false positives on markets with known favorites.
+    value_scanner_enabled: bool = False
+    value_min_edge_pct: float = Field(default=10.0, ge=1.0)
+    value_max_exposure: float = Field(default=10000.0, ge=0)
+
+    # Stale-quote sniping
+    stale_quote_enabled: bool = True
+    stale_quote_min_move_pct: float = Field(default=3.0, ge=1.0)
+    stale_quote_max_staleness_ms: float = Field(default=500.0, ge=100.0)
+    stale_quote_cooldown_sec: float = Field(default=5.0, ge=1.0)
+
+    # Maker scanner filters (phantom arb suppression)
+    maker_min_depth_sets: float = Field(default=5.0, ge=1.0)
+    maker_min_leg_price: float = Field(default=0.05, ge=0.01, le=0.50)
+
+    # Resolution sniping
+    resolution_sniping_enabled: bool = True
+    resolution_max_minutes: float = Field(default=60.0, ge=0)
+    resolution_min_edge_pct: float = Field(default=3.0, ge=0)
 
     # Fanatics Markets (Iteration 6)
     fanatics_api_key: str = ""

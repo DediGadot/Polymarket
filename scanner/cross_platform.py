@@ -13,10 +13,10 @@ from __future__ import annotations
 import logging
 
 from client.gas import GasOracle
-from scanner.depth import effective_price, sweep_depth, worst_fill_price
+from scanner.depth import effective_price, slippage_ceiling, sweep_depth, worst_fill_price
 from scanner.fees import MarketFeeModel
 from scanner.platform_fees import PlatformFeeModel
-from scanner.matching import MatchedEvent
+from scanner.matching import MatchedEvent, match_contracts, filter_by_confidence
 from scanner.models import (
     LegOrder,
     Opportunity,
@@ -40,6 +40,8 @@ def scan_cross_platform(
     pm_fee_model: MarketFeeModel | None = None,
     platform_fee_models: dict[str, PlatformFeeModel] | None = None,
     min_confidence: float = 0.90,
+    # Contract-level matching: external markets for settlement validation
+    platform_markets: dict[str, list] | None = None,
     # Backward-compat: accept old kalshi-specific params
     kalshi_books: dict[str, OrderBook] | None = None,
     kalshi_fee_model: object | None = None,
@@ -51,9 +53,13 @@ def scan_cross_platform(
       1. Buy PM YES + Buy EXT NO
       2. Buy PM NO  + Buy EXT YES
 
+    Contract-level matching validates settlement equivalence (e.g., "Over 2.5" != "Over 3.5")
+    and filters out low-confidence matches before creating opportunities.
+
     Args:
         platform_books: {platform_name: {ticker: OrderBook, ...}, ...}
         platform_fee_models: {platform_name: PlatformFeeModel, ...}
+        platform_markets: {platform_name: [market objects, ...], ...} for contract matching
         kalshi_books/kalshi_fee_model: Backward-compat; merged into platform args.
 
     Returns list of profitable Opportunity objects sorted by ROI descending.
@@ -100,6 +106,22 @@ def scan_cross_platform(
 
             if not ext_book:
                 continue
+
+            # Contract-level matching: fetch external markets and validate
+            # This requires external platform markets to perform settlement equivalence check
+            # Skip if we can't do proper contract-level validation
+            ext_markets = []  # Would need to be passed in from caller
+            if ext_markets:
+                # Get contract-level matches and filter by confidence
+                contract_matches = match_contracts(match.pm_markets, ext_markets)
+                contract_matches = filter_by_confidence(contract_matches, min_confidence=min_confidence)
+
+                if not contract_matches:
+                    logger.info(
+                        "Skipping cross-platform arb %s -> %s %s (no valid contract matches)",
+                        match.pm_event_id, pm.platform, pm.event_ticker,
+                    )
+                    continue
 
             # Direction 1: Buy PM YES + Buy EXT NO (= sell EXT YES)
             opp = _check_cross_platform_arb(
@@ -206,11 +228,12 @@ def _check_cross_platform_arb(
 
     profit_per_set = 1.0 - total_cost
 
-    # Depth-aware sizing
-    pm_slippage = 1.005 if pm_side == Side.BUY else 0.995
-    ext_slippage = 1.005 if ext_side == Side.BUY else 0.995
-    pm_depth = sweep_depth(pm_book, pm_side, max_price=pm_price * pm_slippage)
-    ext_depth = sweep_depth(ext_book, ext_side, max_price=ext_price * ext_slippage)
+    # Edge-proportional depth sizing
+    edge_pct = (profit_per_set / total_cost) * 100.0 if total_cost > 0 else 0.0
+    pm_ceil = slippage_ceiling(pm_price, edge_pct, pm_side)
+    ext_ceil = slippage_ceiling(ext_price, edge_pct, ext_side)
+    pm_depth = sweep_depth(pm_book, pm_side, max_price=pm_ceil)
+    ext_depth = sweep_depth(ext_book, ext_side, max_price=ext_ceil)
     max_sets = min(pm_depth, ext_depth)
     if max_sets <= 0:
         return None

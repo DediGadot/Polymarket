@@ -369,3 +369,149 @@ class TestSortedByConfidence:
         if len(matches) >= 2:
             # Manual (confidence=1.0) should come first
             assert matches[0].confidence >= matches[1].confidence
+
+
+class TestContractLevelMatching:
+    """Tests for contract-level matching after event-level matching."""
+
+    def test_same_event_different_settlement_blocked(self):
+        """Same event but different settlement terms (e.g., Over 2.5 vs Over 3.5) should be blocked."""
+        from scanner.matching import match_contracts, _numeric_threshold_mismatch
+
+        matcher = EventMatcher(manual_map_path="/nonexistent/map.json")
+
+        # PM event with "Over 2.5 goals" market
+        pm_market = Market(
+            condition_id="pm-c1",
+            question="Over 2.5 goals in the match",
+            yes_token_id="pm-yes-1",
+            no_token_id="pm-no-1",
+            neg_risk=False,
+            event_id="pm-e1",
+            min_tick_size="0.01",
+            active=True,
+        )
+        pm_event = _pm_event("pm-e1", "Soccer match goals", [pm_market])
+
+        # Kalshi event with "Over 3.5 goals" (different settlement threshold)
+        kalshi_markets = [
+            _kalshi_market("KX-YES", "KX-EVT", "Over 3.5 goals in the match"),
+        ]
+
+        matches = matcher.match_events([pm_event], _wrap_kalshi(kalshi_markets))
+
+        # Verify numeric threshold mismatch detection works
+        assert _numeric_threshold_mismatch(
+            pm_market.question,
+            kalshi_markets[0].title,
+        ), "Different numeric thresholds should be detected"
+
+        # Contract-level matching should block this
+        contract_matches = match_contracts((pm_market,), kalshi_markets)
+        assert len(contract_matches) == 0, "Different settlement thresholds should be blocked"
+
+    def test_same_event_same_settlement_allowed(self):
+        """Same event with same settlement terms should match at contract level."""
+        from scanner.matching import match_contracts
+
+        matcher = EventMatcher(manual_map_path="/nonexistent/map.json")
+
+        pm_market = Market(
+            condition_id="pm-c1",
+            question="Will BTC be above $65,000 by end of 2026?",
+            yes_token_id="pm-yes-1",
+            no_token_id="pm-no-1",
+            neg_risk=False,
+            event_id="pm-e1",
+            min_tick_size="0.01",
+            active=True,
+        )
+        pm_event = _pm_event("pm-e1", "BTC price end of 2026", [pm_market])
+
+        kalshi_markets = [
+            _kalshi_market("KX-YES", "KX-EVT", "BTC above $65,000 by end of 2026"),
+        ]
+
+        matches = matcher.match_events([pm_event], _wrap_kalshi(kalshi_markets))
+
+        # High-confidence match expected
+        if matches:
+            contract_matches = match_contracts(matches[0].pm_markets, kalshi_markets)
+            assert len(contract_matches) > 0, "Same settlement should match"
+            assert contract_matches[0].confidence >= 0.9, "High confidence for same settlement"
+
+    def test_numeric_threshold_mismatch_detection(self):
+        """Detect numeric threshold differences in settlement terms."""
+        from scanner.matching import _numeric_threshold_mismatch
+
+        # Different numeric values
+        assert _numeric_threshold_mismatch(
+            "Over 2.5 goals",
+            "Over 3.5 goals",
+        ), "Different numeric thresholds should be detected"
+
+        assert _numeric_threshold_mismatch(
+            "Above $50,000",
+            "Above $60,000",
+        ), "Different price thresholds should be detected"
+
+        # Same numeric values
+        assert not _numeric_threshold_mismatch(
+            "Over 2.5 goals",
+            "Over 2.5",
+        ), "Same numeric threshold should not mismatch"
+
+        assert not _numeric_threshold_mismatch(
+            "BTC above $65,000",
+            "Bitcoin exceeds $65,000",
+        ), "Same price threshold should not mismatch"
+
+    def test_per_contract_confidence_filtering(self):
+        """Low per-contract confidence should filter out bad matches."""
+        from scanner.matching import ContractMatch, match_contracts, filter_by_confidence
+
+        pm_market = Market(
+            condition_id="pm-c1",
+            question="Will BTC be above $65,000?",
+            yes_token_id="pm-yes-1",
+            no_token_id="pm-no-1",
+            neg_risk=False,
+            event_id="pm-e1",
+            min_tick_size="0.01",
+            active=True,
+        )
+
+        kalshi_market = _kalshi_market("KX-YES", "KX-EVT", "BTC above $65,000?")
+
+        contract_match = ContractMatch(
+            pm_market=pm_market,
+            ext_market=kalshi_market,
+            confidence=0.85,  # Below 90% threshold
+            match_method="fuzzy",
+        )
+
+        # Should be filtered out with 90% threshold
+        filtered = filter_by_confidence([contract_match], min_confidence=0.90)
+        assert len(filtered) == 0, "Low confidence match should be filtered"
+
+        # Should pass with lower threshold
+        filtered = filter_by_confidence([contract_match], min_confidence=0.80)
+        assert len(filtered) == 1, "Match above threshold should pass"
+
+
+class TestSettlementKeywords:
+    """Tests for settlement keyword detection."""
+
+    def test_threshold_keywords(self):
+        """Keywords indicating different numeric thresholds."""
+        from scanner.matching import _SETTLEMENT_THRESHOLD_KEYWORDS
+
+        # Should contain common threshold indicators
+        assert "over" in _SETTLEMENT_THRESHOLD_KEYWORDS
+        assert "under" in _SETTLEMENT_THRESHOLD_KEYWORDS
+        assert "above" in _SETTLEMENT_THRESHOLD_KEYWORDS
+        assert "below" in _SETTLEMENT_THRESHOLD_KEYWORDS
+        assert "goals" in _SETTLEMENT_THRESHOLD_KEYWORDS
+        assert "points" in _SETTLEMENT_THRESHOLD_KEYWORDS
+        assert "wins" in _SETTLEMENT_THRESHOLD_KEYWORDS
+        assert "$" in _SETTLEMENT_THRESHOLD_KEYWORDS

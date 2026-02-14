@@ -1,0 +1,254 @@
+"""
+Unit tests for executor/cross_platform_v2.py -- state machine integration.
+
+Tests state machine transitions, retry logic, and stuck position persistence.
+"""
+
+import json
+import pytest
+import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+from executor.cross_platform import (
+    execute_cross_platform,
+    CrossPlatformUnwindFailed,
+    _MAX_UNWIND_RETRIES,
+    _UNWIND_BACKOFF_SEC,
+)
+from executor.fill_state import FillState
+
+
+def _make_cross_opp() -> "Opportunity":
+    from scanner.models import Opportunity, OpportunityType, LegOrder, Side
+    return Opportunity(
+        type=OpportunityType.CROSS_PLATFORM_ARB,
+        event_id="e1",
+        legs=(
+            LegOrder(token_id="pm_yes", side=Side.BUY, price=0.40, size=100, platform="polymarket"),
+            LegOrder(token_id="k_yes", side=Side.BUY, price=0.40, size=100, platform="kalshi"),
+        ),
+        expected_profit_per_set=0.20,
+        net_profit_per_set=0.20,
+        max_sets=100,
+        gross_profit=20.0,
+        estimated_gas_cost=0.005,
+        net_profit=19.995,
+        roi_pct=25.0,
+        required_capital=80.0,
+    )
+
+
+def _wrap_clients(kalshi_client):
+    """Wrap a mock kalshi_client into platform_clients dict."""
+    return {"kalshi": kalshi_client}
+
+
+class TestStateMachineIntegration:
+    """Test state machine integration in cross-platform execution."""
+
+    @patch("executor.cross_platform.post_order")
+    @patch("executor.cross_platform.create_limit_order")
+    def test_external_fills_transition_to_resting(self, mock_post, mock_create):
+        """External order filling should transition to RESTING."""
+        # First call returns "open", second returns "resting"
+        call_count = [0]
+
+        def side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return {"orderID": "ext_1", "status": "open"}
+            else:
+                return {"orderID": "ext_1", "status": "resting"}
+
+        mock_post.side_effect = side_effect
+        mock_create.return_value = MagicMock()
+
+        kalshi_client = MagicMock()
+        opp = _make_cross_opp()
+        result = execute_cross_platform(
+            MagicMock(), kalshi_client, opp, size=50.0, paper_trading=False,
+        )
+
+        # External leg should have transitioned to RESTING
+        assert result.fully_filled is False
+
+    @patch("executor.cross_platform.post_order")
+    @patch("executor.cross_platform.create_limit_order")
+    def test_external_resting_transitions_to_filled(self, mock_post, mock_create):
+        """External RESTING order filling should transition to FILLED."""
+        mock_post.return_value = {"orderID": "ext_1", "status": "executed"}
+        mock_create.return_value = MagicMock()
+
+        kalshi_client = MagicMock()
+        opp = _make_cross_opp()
+        result = execute_cross_platform(
+            MagicMock(), kalshi_client, opp, size=50.0, paper_trading=False,
+        )
+
+        # External leg should be FILLED
+        assert result.fully_filled is True
+
+    @patch("executor.cross_platform.post_order")
+    @patch("executor.cross_platform.create_limit_order")
+    def test_external_rejected_transitions_to_unwinding(self, mock_post, mock_create):
+        """External REJECTED should skip PM and trigger unwind."""
+        mock_post.return_value = {"orderID": "ext_1", "status": "rejected"}
+        mock_create.return_value = MagicMock()
+
+        kalshi_client = MagicMock()
+        opp = _make_cross_opp()
+        result = execute_cross_platform(
+            MagicMock(), kalshi_client, opp, size=50.0, paper_trading=False,
+        )
+
+        # External leg rejected, should unwind
+        assert result.fully_filled is False
+        # Kalshi should have been called to unwind
+        assert kalshi_client.place_order.call_count >= 1
+
+    @patch("executor.cross_platform.post_order")
+    @patch("executor.cross_platform.create_limit_order")
+    def test_unwind_retry_on_failure(self, mock_post, mock_create):
+        """Unwind should retry up to 3 times with backoff."""
+        mock_post.return_value = {"orderID": "k_1", "status": "executed"}
+        mock_create.return_value = MagicMock()
+
+        kalshi_client = MagicMock()
+        kalshi_client.place_order.side_effect = [
+            Exception("API error 1"),
+            Exception("API error 2"),
+            {"orderID": "k_1", "status": "executed"},  # Success on 3rd try
+        ]
+
+        opp = _make_cross_opp()
+        result = execute_cross_platform(
+            MagicMock(), kalshi_client, opp, size=50.0, paper_trading=False,
+        )
+
+        # Should have retried 3 times
+        assert kalshi_client.place_order.call_count == _MAX_UNWIND_RETRIES
+
+    @patch("executor.cross_platform.post_order")
+    @patch("executor.cross_platform.create_limit_order")
+    def test_unwind_raises_after_max_retries(self, mock_post, mock_create):
+        """Unwind should raise CrossPlatformUnwindFailed after max retries."""
+        mock_post.return_value = {"orderID": "k_1", "status": "executed"}
+        mock_create.return_value = MagicMock()
+
+        kalshi_client = MagicMock()
+        kalshi_client.place_order.side_effect = [
+            Exception("API error 1"),
+            Exception("API error 2"),
+            Exception("API error 3"),
+        ]  # Never succeeds
+
+        opp = _make_cross_opp()
+        with pytest.raises(CrossPlatformUnwindFailed, match="Failed to unwind"):
+            execute_cross_platform(
+                MagicMock(), kalshi_client, opp, size=50.0, paper_trading=False,
+            )
+
+        # Should have attempted max retries
+        assert kalshi_client.place_order.call_count == _MAX_UNWIND_RETRIES
+
+
+class TestStuckPositionPersistence:
+    """Test stuck position persistence to/from JSON file."""
+
+    def test_persist_stuck_to_global_file(self, tmp_path):
+        """Stuck positions should be persisted to stuck_positions.json."""
+        from executor.cross_platform import _persist_stuck, _STUCK_POSITIONS_FILE
+
+        # Patch the global file path to use tmp_path
+        with patch("executor.cross_platform._STUCK_POSITIONS_FILE", str(tmp_path)):
+            position_data = {
+                "ticker": "test_1",
+                "side": "BUY",
+                "size": 10,
+                "platform": "kalshi",
+                "error": "API timeout",
+                "attempts": 3,
+            }
+
+            _persist_stuck(position_data)
+
+            persisted = json.loads(tmp_path.read_text())
+            assert len(persisted) == 1
+            assert persisted[0]["ticker"] == "test_1"
+            assert persisted[0]["platform"] == "kalshi"
+
+    def test_persist_stuck_appends_to_existing(self, tmp_path):
+        """New stuck positions should append to existing file."""
+        from executor.cross_platform import _persist_stuck
+
+        # Create existing file
+        existing = [{"ticker": "old_1", "side": "BUY", "size": 10, "platform": "kalshi", "error": "Old error"}]
+        tmp_path.write_text(json.dumps(existing))
+
+        with patch("executor.cross_platform._STUCK_POSITIONS_FILE", str(tmp_path)):
+            new_stuck = {
+                "ticker": "new_1",
+                "side": "SELL",
+                "size": 5,
+                "platform": "kalshi",
+                "error": "New error",
+                "attempts": 3,
+            }
+            _persist_stuck(new_stuck)
+
+            persisted = json.loads(tmp_path.read_text())
+            assert len(persisted) == 2
+            assert persisted[0]["ticker"] == "old_1"
+            assert persisted[1]["ticker"] == "new_1"
+
+    def test_load_stuck_positions(self, tmp_path):
+        """Should load stuck positions from file on startup."""
+        from executor.cross_platform import _load_stuck_positions
+
+        stuck_positions = [
+            {"ticker": "test_1", "side": "BUY", "size": 10, "platform": "kalshi", "error": "API timeout"},
+            {"ticker": "test_2", "side": "SELL", "size": 5, "platform": "kalshi", "error": "Liquidity error"},
+        ]
+        tmp_path.write_text(json.dumps(stuck_positions))
+
+        with patch("executor.cross_platform._STUCK_POSITIONS_FILE", str(tmp_path)):
+            loaded = _load_stuck_positions()
+            assert len(loaded) == 2
+            assert loaded[0]["ticker"] == "test_1"
+            assert loaded[1]["ticker"] == "test_2"
+
+
+class TestCascadingFailureScenario:
+    """Test cascading failure: Kalshi fills, PM fails, unwind retries, stuck."""
+
+    @patch("executor.cross_platform.post_order")
+    @patch("executor.cross_platform.create_limit_order")
+    @patch("executor.cross_platform.time")
+    def test_kalshi_fill_then_pm_fail_unwind_stuck(self, mock_post, mock_create, mock_time):
+        """Kalshi fills, PM fails, unwind retries and fails -> stuck."""
+        # Time passes normally (no deadline)
+        mock_time.side_effect = lambda x: x
+
+        # Kalshi succeeds
+        kalshi_client = MagicMock()
+        kalshi_client.place_order.return_value = {
+            "order": {"orderID": "k_1", "status": "executed"},
+        }
+
+        # PM fails
+        mock_post.return_value = {"orderID": "pm_1", "status": "rejected"}
+
+        mock_create.return_value = MagicMock()
+
+        opp = _make_cross_opp()
+        result = execute_cross_platform(
+            MagicMock(), kalshi_client, opp, size=50.0, paper_trading=False,
+        )
+
+        # External should have failed, PM should have been attempted
+        assert result.fully_filled is False
+        # Kalshi unwind should have been attempted max retries
+        assert kalshi_client.place_order.call_count == _MAX_UNWIND_RETRIES
+        # Net PNL should be negative (unwind loss)
+        assert result.net_pnl < 0

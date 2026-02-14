@@ -445,3 +445,108 @@ class TestScanNegRiskEvents:
 
         assert len(result) >= 2
         assert fetcher.call_count() == 1
+
+
+class TestEventMarketCountsBypass:
+    """Tests for event_market_counts bypass fix (task 1.2)."""
+
+    def test_skips_event_when_market_count_is_zero(self):
+        """Event should be skipped when event_market_counts returns 0 (unknown completeness)."""
+        m1 = _make_market("c1", "y1", "n1", "e1")
+        m2 = _make_market("c2", "y2", "n2", "e1")
+        m3 = _make_market("c3", "y3", "n3", "e1")
+        event = _make_event([m1, m2, m3], "e1")
+
+        fetcher = _mock_book_fetcher({
+            "y1": _make_book("y1", 0.25, 100, 0.25, 100),
+            "y2": _make_book("y2", 0.25, 100, 0.25, 100),
+            "y3": _make_book("y3", 0.25, 100, 0.25, 100),
+        })
+
+        # event_market_counts returns empty dict -> expected_total = 0 -> should skip
+        result = scan_negrisk_events(
+            fetcher, [event], 0.01, 0.1, 150000, 30.0,
+            event_market_counts={},  # Empty -> expected_total = 0 for all events
+        )
+
+        # Should skip the event because completeness is unknown
+        assert result == []
+
+    def test_skips_event_when_neg_risk_market_id_missing_from_counts(self):
+        """Event should be skipped when its neg_risk_market_id is not in counts."""
+        m1 = _make_market("c1", "y1", "n1", "e1")
+        m2 = _make_market("c2", "y2", "n2", "e1")
+        event = _make_event([m1, m2], "e1")
+        # Override to have a neg_risk_market_id
+        event_with_nrm = Event(
+            event_id="e1",
+            title="Event with NRM ID",
+            markets=event.markets,
+            neg_risk=True,
+            neg_risk_market_id="nrm123",  # Has NRM ID but not in counts
+        )
+
+        fetcher = _mock_book_fetcher({
+            "y1": _make_book("y1", 0.25, 100, 0.25, 100),
+            "y2": _make_book("y2", 0.25, 100, 0.25, 100),
+        })
+
+        # event_market_counts doesn't have "nrm123" key
+        result = scan_negrisk_events(
+            fetcher, [event_with_nrm], 0.01, 0.1, 150000, 30.0,
+            event_market_counts={"other_nrm": 3},  # Missing "nrm123" key
+        )
+
+        # Should skip because expected_total = 0 for this event
+        assert result == []
+
+    def test_allows_event_when_market_count_positive(self):
+        """Event should proceed when event_market_counts has positive value."""
+        m1 = _make_market("c1", "y1", "n1", "e1")
+        m2 = _make_market("c2", "y2", "n2", "e1")
+        event = _make_event([m1, m2], "e1")
+
+        fetcher = _mock_book_fetcher({
+            "y1": _make_book("y1", 0.25, 100, 0.25, 100),
+            "y2": _make_book("y2", 0.25, 100, 0.25, 100),
+        })
+
+        # event_market_counts has expected_total = 2
+        result = scan_negrisk_events(
+            fetcher, [event], 0.01, 0.1, 150000, 30.0,
+            event_market_counts={"e1": 2},  # 2 markets expected, 2 active
+        )
+
+        # Should find the arb
+        assert len(result) >= 1
+
+    def test_skips_event_when_active_markets_less_than_expected(self):
+        """Event should be skipped when active markets < expected total."""
+        m1 = _make_market("c1", "y1", "n1", "e1")
+        m2 = _make_market("c2", "y2", "n2", "e1")
+        # Inactive market (closed or stale)
+        m3 = Market(
+            condition_id="c3",
+            question="Inactive outcome",
+            yes_token_id="y3",
+            no_token_id="n3",
+            neg_risk=True,
+            event_id="e1",
+            min_tick_size="0.01",
+            active=False,  # Inactive
+        )
+        event = _make_event([m1, m2, m3], "e1")
+
+        fetcher = _mock_book_fetcher({
+            "y1": _make_book("y1", 0.25, 100, 0.25, 100),
+            "y2": _make_book("y2", 0.25, 100, 0.25, 100),
+        })
+
+        # event_market_counts has expected_total = 3 but only 2 active
+        result = scan_negrisk_events(
+            fetcher, [event], 0.01, 0.1, 150000, 30.0,
+            event_market_counts={"e1": 3},  # 3 expected, 2 active
+        )
+
+        # Should skip because we have incomplete outcome set
+        assert result == []

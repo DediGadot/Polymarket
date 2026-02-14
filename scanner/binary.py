@@ -9,8 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from client.gas import GasOracle
-from scanner.depth import effective_price, sweep_depth, worst_fill_price
+from scanner.depth import effective_price, slippage_ceiling, sweep_depth, worst_fill_price
 from scanner.fees import MarketFeeModel
 from scanner.models import (
     BookFetcher,
@@ -40,6 +39,8 @@ def scan_binary_markets(
     fee_model: MarketFeeModel | None = None,
     book_cache: "BookCache | None" = None,
     min_volume: float = 0.0,
+    slippage_fraction: float = 0.4,
+    max_slippage_pct: float = 3.0,
 ) -> list[Opportunity]:
     """
     Scan all binary (non-negRisk) markets for rebalancing arbitrage.
@@ -74,6 +75,7 @@ def scan_binary_markets(
             min_profit_usd, min_roi_pct,
             gas_per_order, gas_price_gwei,
             gas_oracle=gas_oracle, fee_model=fee_model,
+            slippage_fraction=slippage_fraction, max_slippage_pct=max_slippage_pct,
         )
         if opp:
             opportunities.append(opp)
@@ -83,6 +85,7 @@ def scan_binary_markets(
             min_profit_usd, min_roi_pct,
             gas_per_order, gas_price_gwei,
             gas_oracle=gas_oracle, fee_model=fee_model,
+            slippage_fraction=slippage_fraction, max_slippage_pct=max_slippage_pct,
         )
         if opp:
             opportunities.append(opp)
@@ -101,6 +104,8 @@ def _check_buy_arb(
     gas_price_gwei: float,
     gas_oracle: GasOracle | None = None,
     fee_model: MarketFeeModel | None = None,
+    slippage_fraction: float = 0.4,
+    max_slippage_pct: float = 3.0,
 ) -> Opportunity | None:
     """
     Check if buying both YES and NO is cheaper than $1.00.
@@ -116,10 +121,12 @@ def _check_buy_arb(
     if cost_per_set >= 1.0:
         return None
 
-    # Depth-aware sizing: use sweep_depth to find actual fillable size
-    # within 0.5% above best ask price (slippage ceiling)
-    yes_depth = sweep_depth(yes_book, Side.BUY, max_price=yes_ask.price * 1.005)
-    no_depth = sweep_depth(no_book, Side.BUY, max_price=no_ask.price * 1.005)
+    # Edge-proportional slippage: wider edges tolerate more slippage
+    edge_pct = ((1.0 - cost_per_set) / cost_per_set) * 100.0
+    yes_ceiling = slippage_ceiling(yes_ask.price, edge_pct, Side.BUY, slippage_fraction, max_slippage_pct)
+    no_ceiling = slippage_ceiling(no_ask.price, edge_pct, Side.BUY, slippage_fraction, max_slippage_pct)
+    yes_depth = sweep_depth(yes_book, Side.BUY, max_price=yes_ceiling)
+    no_depth = sweep_depth(no_book, Side.BUY, max_price=no_ceiling)
     max_sets = min(yes_depth, no_depth)
     if max_sets <= 0:
         return None
@@ -198,6 +205,8 @@ def _check_sell_arb(
     gas_price_gwei: float,
     gas_oracle: GasOracle | None = None,
     fee_model: MarketFeeModel | None = None,
+    slippage_fraction: float = 0.4,
+    max_slippage_pct: float = 3.0,
 ) -> Opportunity | None:
     """
     Check if selling both YES and NO yields more than $1.00.
@@ -213,10 +222,12 @@ def _check_sell_arb(
     if proceeds_per_set <= 1.0:
         return None
 
-    # Depth-aware sizing: use sweep_depth to find actual fillable size
-    # within 0.5% below best bid price (slippage floor)
-    yes_depth = sweep_depth(yes_book, Side.SELL, max_price=yes_bid.price * 0.995)
-    no_depth = sweep_depth(no_book, Side.SELL, max_price=no_bid.price * 0.995)
+    # Edge-proportional slippage: wider edges tolerate more slippage
+    edge_pct = ((proceeds_per_set - 1.0) / 1.0) * 100.0
+    yes_floor = slippage_ceiling(yes_bid.price, edge_pct, Side.SELL, slippage_fraction, max_slippage_pct)
+    no_floor = slippage_ceiling(no_bid.price, edge_pct, Side.SELL, slippage_fraction, max_slippage_pct)
+    yes_depth = sweep_depth(yes_book, Side.SELL, max_price=yes_floor)
+    no_depth = sweep_depth(no_book, Side.SELL, max_price=no_floor)
     max_sets = min(yes_depth, no_depth)
     if max_sets <= 0:
         return None

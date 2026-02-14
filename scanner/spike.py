@@ -120,6 +120,31 @@ class SpikeDetector:
     # Map token_id -> event_id for sibling lookup
     _token_events: dict[str, str] = field(default_factory=dict)
 
+    def cleanup_stale(self, active_tokens: set[str]) -> None:
+        """
+        Remove tokens that are no longer active.
+
+        Prevents memory leak in long-running sessions by pruning
+        histories and token_event mappings for tokens no longer
+        in the active market set.
+
+        Args:
+            active_tokens: Set of token_ids that are currently active
+        """
+        # Find tokens to remove (in our data but not active)
+        stale_tokens = set(self._histories.keys()) - active_tokens
+
+        for token_id in stale_tokens:
+            self._histories.pop(token_id, None)
+            self._token_events.pop(token_id, None)
+            self._cooldowns.pop(token_id, None)
+
+        if stale_tokens:
+            logger.debug(
+                "SpikeDetector: cleaned up %d stale tokens (%d remaining)",
+                len(stale_tokens), len(self._histories),
+            )
+
     def register_token(self, token_id: str, event_id: str) -> None:
         """Register a token's event membership for sibling lookup."""
         self._token_events[token_id] = event_id

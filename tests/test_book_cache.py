@@ -186,6 +186,54 @@ class TestStoreBook:
         assert cache.get_book("tok1") is book
         assert cache.age("tok1") < 1.0
 
+    def test_prune_removes_old_entries(self):
+        """prune() should remove entries older than max_age_sec."""
+        import time
+        cache = BookCache(max_age_sec=5.0)
+
+        # Add entries at different times
+        now = time.time()
+        from scanner.models import OrderBook, PriceLevel
+
+        cache.store_book(OrderBook(token_id="old1", bids=(PriceLevel(0.50, 100),), asks=()),
+                     timestamp=now - 400)  # 6m40s ago
+        cache.store_book(OrderBook(token_id="old2", bids=(PriceLevel(0.51, 100),), asks=()),
+                     timestamp=now - 350)  # 5m50s ago
+        cache.store_book(OrderBook(token_id="fresh1", bids=(PriceLevel(0.52, 100),), asks=()),
+                     timestamp=now - 100)  # 1m40s ago
+        cache.store_book(OrderBook(token_id="fresh2", bids=(PriceLevel(0.53, 100),), asks=()),
+                     timestamp=now)  # just now
+
+        # Before prune: 4 entries
+        assert cache.token_count() == 4
+
+        # Prune entries older than 5 minutes (300 sec)
+        cache.prune(max_age_sec=300)
+
+        # After prune: only 2 fresh entries remain
+        assert cache.token_count() == 2
+        assert cache.get_book("old1") is None
+        assert cache.get_book("old2") is None
+        assert cache.get_book("fresh1") is not None
+        assert cache.get_book("fresh2") is not None
+
+    def test_prune_with_default_max_age(self):
+        """prune() with default max_age should use cache's max_age_sec."""
+        import time
+        cache = BookCache(max_age_sec=5.0)
+        from scanner.models import OrderBook, PriceLevel
+
+        now = time.time()
+        cache.store_book(OrderBook(token_id="old", bids=(PriceLevel(0.50, 100),), asks=()),
+                     timestamp=now - 400)
+        cache.store_book(OrderBook(token_id="fresh", bids=(PriceLevel(0.51, 100),), asks=()),
+                     timestamp=now)
+
+        assert cache.token_count() == 2
+        cache.prune()  # Should use default max_age_sec=5.0
+        assert cache.token_count() == 1
+        assert cache.get_book("fresh") is not None
+
     def test_store_books_multiple(self):
         from scanner.models import OrderBook, PriceLevel
         cache = BookCache()

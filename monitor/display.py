@@ -12,7 +12,7 @@ import logging
 import time
 from collections import Counter
 
-from config import Config
+from config import Config, active_platforms
 from scanner.models import OpportunityType
 from scanner.scorer import ScoredOpportunity
 
@@ -83,6 +83,9 @@ def print_startup(cfg: Config, args: argparse.Namespace) -> None:
         mode, cfg.min_profit_usd, cfg.min_roi_pct, cfg.max_exposure_per_trade,
     )
     logger.info("  Scanners: %s", scanner_str)
+    platforms = ["polymarket"] + active_platforms(cfg)
+    platform_str = "  ".join(platforms)
+    logger.info("  Platforms: %s", platform_str)
     logger.info(
         "  Interval: %.1fs  Order: %s  WS: %s",
         cfg.scan_interval_sec,

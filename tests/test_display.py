@@ -90,7 +90,7 @@ def _collect_logs(caplog, func, *args, **kwargs):
 
 class TestPrintStartup:
     def test_logs_mode(self, caplog):
-        cfg = Config(min_profit_usd=0.50, min_roi_pct=2.0, max_exposure_per_trade=500)
+        cfg = Config(min_profit_usd=0.50, min_roi_pct=2.0, max_exposure_per_trade=5000)
         args = _default_args(dry_run=True)
         msgs = _collect_logs(caplog, print_startup, cfg, args)
         assert any("DRY-RUN" in m for m in msgs)

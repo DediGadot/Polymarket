@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import queue
 import time
 from dataclasses import dataclass, field
 
@@ -39,16 +40,20 @@ class BookUpdate:
 class WSManager:
     """
     Manages a WebSocket connection to Polymarket's market data feed.
-    Emits price and book updates via async queues.
+    Emits price and book updates via bounded synchronous queues.
     """
     url: str
     token_ids: list[str]
-    price_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
-    book_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
+    price_queue: queue.Queue = field(default_factory=lambda: queue.Queue(maxsize=10000))
+    book_queue: queue.Queue = field(default_factory=lambda: queue.Queue(maxsize=10000))
     max_retries: int = MAX_RETRIES
     _running: bool = False
     _ws: object = None
     _task: asyncio.Task | None = None
+    # Health tracking
+    _last_message_time: float = field(default_factory=lambda: 0.0)
+    _connect_time: float = field(default_factory=lambda: 0.0)
+    _failed_connections: int = 0
 
     async def start(self) -> None:
         """Start the WebSocket listener in a background task."""
@@ -90,6 +95,37 @@ class WSManager:
             })
             await self._ws.send(msg)
 
+    def is_healthy(self, max_silence_sec: float = 30.0) -> bool:
+        """
+        Check if WebSocket connection is healthy.
+
+        Args:
+            max_silence_sec: Maximum seconds since last message before
+                              considering the connection unhealthy.
+
+        Returns:
+            True if connected and receiving messages, False if silent or not running.
+        """
+        if not self._running or not self._ws:
+            return False
+
+        # Check if we've received messages recently
+        now = time.time()
+        time_since_last = now - self._last_message_time
+
+        # Never received a message
+        if self._last_message_time == 0.0:
+            # Give some grace period after connection
+            if now - self._connect_time > max_silence_sec:
+                return False
+            return True
+
+        return time_since_last <= max_silence_sec
+
+    def _record_message(self) -> None:
+        """Update last message time for health tracking."""
+        self._last_message_time = time.time()
+
     async def _run_loop(self) -> None:
         """Connect and listen, with exponential backoff on failures."""
         retries = 0
@@ -97,7 +133,10 @@ class WSManager:
             try:
                 async with connect(self.url) as ws:
                     self._ws = ws
+                    self._connect_time = time.time()
+                    self._last_message_time = 0.0  # Reset message time on reconnect
                     retries = 0  # reset on successful connection
+                    self._failed_connections = 0
                     logger.info("WebSocket connected to %s", self.url)
 
                     # Send initial subscription
@@ -110,10 +149,12 @@ class WSManager:
                     async for raw_msg in ws:
                         if not self._running:
                             break
+                        self._record_message()
                         self._handle_message(raw_msg)
 
             except (websockets.ConnectionClosed, ConnectionError, OSError) as e:
                 retries += 1
+                self._failed_connections += 1
                 if retries > self.max_retries:
                     logger.error(
                         "WebSocket max retries (%d) exceeded. Last error: %s",
@@ -152,7 +193,16 @@ class WSManager:
                     update = PriceUpdate(
                         token_id=asset_id, price=price, timestamp=now
                     )
-                    self.price_queue.put_nowait(update)
+                    try:
+                        self.price_queue.put_nowait(update)
+                    except queue.Full:
+                        # Drop oldest entry to make room
+                        try:
+                            self.price_queue.get_nowait()
+                            self.price_queue.put_nowait(update)
+                        except queue.Empty:
+                            pass
+                        logger.warning("Price queue full, dropped oldest for %s", asset_id)
                 except (KeyError, ValueError) as e:
                     logger.warning("Bad price_change event: %s", e)
 
@@ -163,4 +213,13 @@ class WSManager:
                     asks=event.get("asks", []),
                     timestamp=now,
                 )
-                self.book_queue.put_nowait(update)
+                try:
+                    self.book_queue.put_nowait(update)
+                except queue.Full:
+                    # Drop oldest entry to make room
+                    try:
+                        self.book_queue.get_nowait()
+                        self.book_queue.put_nowait(update)
+                    except queue.Empty:
+                        pass
+                    logger.warning("Book queue full, dropped oldest for %s", asset_id)

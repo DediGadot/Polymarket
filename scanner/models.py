@@ -19,9 +19,13 @@ class Platform(Enum):
 class OpportunityType(Enum):
     BINARY_REBALANCE = "binary_rebalance"
     NEGRISK_REBALANCE = "negrisk_rebalance"
+    NEGRISK_VALUE = "negrisk_value"
     LATENCY_ARB = "latency_arb"
     SPIKE_LAG = "spike_lag"
     CROSS_PLATFORM_ARB = "cross_platform_arb"
+    RESOLUTION_SNIPE = "resolution_snipe"
+    STALE_QUOTE_ARB = "stale_quote_arb"
+    MAKER_REBALANCE = "maker_rebalance"
 
 
 class Side(Enum):
@@ -122,6 +126,7 @@ class LegOrder:
     price: float
     size: float
     platform: str = ""
+    tick_size: str = "0.01"  # "0.01" or "0.001"
 
 
 @dataclass(frozen=True)
@@ -154,12 +159,12 @@ class Opportunity:
         return len(self.legs) > 0 and all(leg.side == Side.BUY for leg in self.legs)
 
 
-@dataclass
+@dataclass(frozen=True)
 class TradeResult:
     opportunity: Opportunity
-    order_ids: list[str]
-    fill_prices: list[float]
-    fill_sizes: list[float]
+    order_ids: tuple[str, ...]
+    fill_prices: tuple[float, ...]
+    fill_sizes: tuple[float, ...]
     fees: float
     gas_cost: float
     net_pnl: float

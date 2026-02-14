@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import queue
 import threading
 
 from client.ws import WSManager, BookUpdate, PriceUpdate
@@ -111,7 +112,7 @@ class WSBridge:
                 )
                 self._books_received += 1
                 count += 1
-            except asyncio.QueueEmpty:
+            except queue.Empty:
                 break
 
         # Drain price updates
@@ -122,7 +123,7 @@ class WSBridge:
                     self._spike_detector.update(update.token_id, update.price)
                 self._prices_received += 1
                 count += 1
-            except asyncio.QueueEmpty:
+            except queue.Empty:
                 break
 
         return count
