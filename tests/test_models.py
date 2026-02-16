@@ -13,6 +13,7 @@ from scanner.models import (
     OpportunityType,
     Side,
     TradeResult,
+    is_market_stale,
 )
 
 
@@ -196,6 +197,65 @@ class TestIsSellArb:
         opp = self._make_opp_with_legs([])
         assert opp.is_sell_arb is False
         assert opp.is_buy_arb is False
+
+
+class TestIsMarketStale:
+    def _make_market(self, end_date: str = "", closed: bool = False) -> Market:
+        return Market(
+            condition_id="cond1", question="Q?",
+            yes_token_id="y1", no_token_id="n1",
+            neg_risk=False, event_id="e1",
+            min_tick_size="0.01", active=True,
+            end_date=end_date, closed=closed,
+        )
+
+    def test_closed_is_stale(self):
+        assert is_market_stale(self._make_market(closed=True)) is True
+
+    def test_no_end_date_not_stale(self):
+        assert is_market_stale(self._make_market(end_date="")) is False
+
+    def test_future_date_not_stale(self):
+        assert is_market_stale(self._make_market(end_date="2099-12-31T23:59:59Z")) is False
+
+    def test_past_date_is_stale(self):
+        assert is_market_stale(self._make_market(end_date="2020-01-01T00:00:00Z")) is True
+
+    def test_cached_results_consistent(self):
+        """Repeated calls with same end_date return same result (cache hit)."""
+        m1 = self._make_market(end_date="2099-06-15T00:00:00Z")
+        m2 = self._make_market(end_date="2099-06-15T00:00:00Z")
+        result1 = is_market_stale(m1)
+        result2 = is_market_stale(m2)
+        assert result1 == result2
+        assert result1 is False
+
+    def test_different_dates_different_results(self):
+        """Different end_dates can have different results."""
+        future = self._make_market(end_date="2099-12-31T23:59:59Z")
+        past = self._make_market(end_date="2020-01-01T00:00:00Z")
+        assert is_market_stale(future) is False
+        assert is_market_stale(past) is True
+
+    def test_performance_cached(self):
+        """Cached calls should be significantly faster than uncached."""
+        markets = [
+            self._make_market(end_date=f"2099-{m:02d}-15T00:00:00Z")
+            for m in range(1, 13)
+        ]
+        # Warm the cache
+        for m in markets:
+            is_market_stale(m)
+
+        # Benchmark cached calls (1000 reps)
+        start = time.perf_counter()
+        for _ in range(1000):
+            for m in markets:
+                is_market_stale(m)
+        elapsed = time.perf_counter() - start
+        per_call_us = elapsed / 12000 * 1e6
+        # Cached calls should take < 1us each (vs ~2us uncached)
+        assert per_call_us < 1.5, f"Cached is_market_stale too slow: {per_call_us:.2f}us"
 
 
 class TestTradeResult:

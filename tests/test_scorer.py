@@ -11,6 +11,7 @@ from scanner.scorer import (
     _score_fill,
     _score_urgency,
     _score_competition,
+    _score_ofi,
 )
 from scanner.models import (
     Opportunity,
@@ -116,6 +117,37 @@ class TestScoreCompetition:
         assert 0.3 < score < 0.8
 
 
+class TestScoreOFI:
+    def test_zero_divergence(self):
+        ctx = ScoringContext(ofi_divergence=0.0)
+        assert _score_ofi(ctx) == 0.0
+
+    def test_high_divergence(self):
+        ctx = ScoringContext(ofi_divergence=200.0)
+        score = _score_ofi(ctx)
+        assert score > 0.9
+
+    def test_moderate_divergence(self):
+        ctx = ScoringContext(ofi_divergence=50.0)
+        score = _score_ofi(ctx)
+        assert 0.5 < score < 0.9
+
+    def test_small_divergence(self):
+        ctx = ScoringContext(ofi_divergence=5.0)
+        score = _score_ofi(ctx)
+        assert 0.0 < score < 0.5
+
+    def test_capped_at_one(self):
+        ctx = ScoringContext(ofi_divergence=10000.0)
+        assert _score_ofi(ctx) == 1.0
+
+    def test_default_ofi_divergence_is_zero(self):
+        """Backward compat: default ScoringContext produces neutral OFI score."""
+        ctx = ScoringContext()
+        assert ctx.ofi_divergence == 0.0
+        assert _score_ofi(ctx) == 0.0
+
+
 class TestScoreOpportunity:
     def test_returns_scored_opportunity(self):
         opp = _make_opp()
@@ -149,4 +181,19 @@ class TestRankOpportunities:
         ctx_good = ScoringContext(book_depth_ratio=3.0, recent_trade_count=0)
         ctx_bad = ScoringContext(book_depth_ratio=0.1, recent_trade_count=100)
         ranked = rank_opportunities([opp, opp], [ctx_good, ctx_bad])
+        assert ranked[0].total_score > ranked[1].total_score
+
+    def test_context_length_mismatch_keeps_all_opps(self):
+        opp1 = _make_opp(net_profit=5.0)
+        opp2 = _make_opp(net_profit=1.0)
+        ranked = rank_opportunities([opp1, opp2], [ScoringContext(book_depth_ratio=2.0)])
+        assert len(ranked) == 2
+
+    def test_high_ofi_divergence_ranks_higher(self):
+        opp = _make_opp(net_profit=5.0)
+        ctx_high_ofi = ScoringContext(ofi_divergence=200.0)
+        ctx_no_ofi = ScoringContext(ofi_divergence=0.0)
+        ranked = rank_opportunities([opp, opp], [ctx_no_ofi, ctx_high_ofi])
+        # High OFI divergence should rank first
+        assert ranked[0].ofi_score > ranked[1].ofi_score
         assert ranked[0].total_score > ranked[1].total_score

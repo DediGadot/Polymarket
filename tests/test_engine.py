@@ -92,6 +92,25 @@ def _make_negrisk_sell_opp():
     )
 
 
+def _make_maker_opp():
+    return Opportunity(
+        type=OpportunityType.MAKER_REBALANCE,
+        event_id="e1",
+        legs=(
+            LegOrder("y1", Side.BUY, 0.45, 100),
+            LegOrder("n1", Side.BUY, 0.45, 100),
+        ),
+        expected_profit_per_set=0.10,
+        net_profit_per_set=0.10,
+        max_sets=100,
+        gross_profit=10.0,
+        estimated_gas_cost=0.01,
+        net_profit=9.99,
+        roi_pct=11.1,
+        required_capital=90.0,
+    )
+
+
 class TestPaperExecute:
     def test_paper_binary(self):
         opp = _make_binary_opp()
@@ -110,6 +129,10 @@ class TestPaperExecute:
         assert result.fully_filled is True
         assert len(result.order_ids) == 3
         assert result.fill_sizes == (30.0, 30.0, 30.0)
+
+    def test_maker_not_supported_in_execution_engine(self):
+        with pytest.raises(ValueError, match="maker_lifecycle"):
+            execute_opportunity(MagicMock(), _make_maker_opp(), size=10.0, paper_trading=False)
 
 
 class TestExecuteBinary:

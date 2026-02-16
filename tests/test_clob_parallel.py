@@ -2,7 +2,8 @@
 Unit tests for client/clob.py -- get_orderbooks_parallel().
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+import client.clob as clob
 from client.clob import get_orderbooks_parallel, BOOK_BATCH_SIZE
 from scanner.models import OrderBook
 
@@ -98,3 +99,15 @@ class TestGetOrderbooksParallel:
         # Asks: lowest first
         assert book.asks[0].price == 0.52
         assert book.asks[1].price == 0.55
+
+
+class TestRetryApiCall:
+    @patch("client.clob.time.sleep", return_value=None)
+    def test_retries_on_rate_limit_then_succeeds(self, _mock_sleep):
+        fn = MagicMock(side_effect=[
+            RuntimeError("429 Too Many Requests: rate limit"),
+            "ok",
+        ])
+        result = clob._retry_api_call(fn, "arg1")
+        assert result == "ok"
+        assert fn.call_count == 2

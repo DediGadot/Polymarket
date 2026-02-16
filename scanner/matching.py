@@ -23,8 +23,10 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from rapidfuzz import fuzz
 
@@ -202,10 +204,13 @@ class EventMatcher:
         manual_map_path: str = "cross_platform_map.json",
         fuzzy_threshold: float = FUZZY_THRESHOLD,
         verified_path: str = "verified_matches.json",
+        negative_ttl_sec: float = 300.0,
     ) -> None:
         self._manual_map = self._load_json_map(manual_map_path)
         self._fuzzy_threshold = fuzzy_threshold
         self._verified = self._load_json_map(verified_path)
+        self._negative_ttl_sec = max(0.0, float(negative_ttl_sec))
+        self._negative_cache: dict[tuple[str, str], float] = {}
 
     @staticmethod
     def _load_json_map(path: str) -> dict:
@@ -253,10 +258,58 @@ class EventMatcher:
             return val.get(platform)
         return None
 
+    @staticmethod
+    def _has_tradeable_mapping_for_platform(mapping: dict, platform: str) -> bool:
+        """Return True if mapping dict has at least one entry for platform."""
+        for value in mapping.values():
+            if isinstance(value, str):
+                if platform == "kalshi" and value:
+                    return True
+            elif isinstance(value, dict):
+                mapped = value.get(platform)
+                if isinstance(mapped, str) and mapped:
+                    return True
+        return False
+
+    def has_tradeable_mappings(self, platforms: list[str] | None = None) -> bool:
+        """
+        True when manual/verified maps contain at least one tradeable mapping
+        for any selected platform.
+        """
+        if platforms is None:
+            platforms = ["kalshi", "fanatics"]
+        for platform in platforms:
+            if self._has_tradeable_mapping_for_platform(self._manual_map, platform):
+                return True
+            if self._has_tradeable_mapping_for_platform(self._verified, platform):
+                return True
+        return False
+
+    def _negative_cache_hit(self, pm_event_id: str, platform: str) -> bool:
+        """True when a recent non-tradeable fuzzy result is still cooling down."""
+        if self._negative_ttl_sec <= 0:
+            return False
+        key = (pm_event_id, platform)
+        expiry = self._negative_cache.get(key, 0.0)
+        now = time.time()
+        if expiry <= now:
+            self._negative_cache.pop(key, None)
+            return False
+        return True
+
+    def _remember_negative(self, pm_event_id: str, platform: str) -> None:
+        """Cache a non-tradeable fuzzy outcome to avoid repeating heavy matching."""
+        if self._negative_ttl_sec <= 0:
+            return
+        self._negative_cache[(pm_event_id, platform)] = time.time() + self._negative_ttl_sec
+
     def match_events(
         self,
         pm_events: list[Event],
         platform_markets: dict[str, list],
+        *,
+        include_fuzzy: bool = True,
+        should_stop: Callable[[], bool] | None = None,
     ) -> list[MatchedEvent]:
         """
         Match Polymarket events to external platform markets.
@@ -283,11 +336,20 @@ class EventMatcher:
             platform_indexes[platform_name] = (by_event, titles)
 
         for pm_event in pm_events:
+            if should_stop and should_stop():
+                break
             platform_match_list: list[PlatformMatch] = []
 
             for platform_name, (by_event, titles) in platform_indexes.items():
+                if should_stop and should_stop():
+                    break
                 pm_match = self._match_single_platform(
-                    pm_event, platform_name, by_event, titles,
+                    pm_event,
+                    platform_name,
+                    by_event,
+                    titles,
+                    include_fuzzy=include_fuzzy,
+                    should_stop=should_stop,
                 )
                 if pm_match is not None:
                     platform_match_list.append(pm_match)
@@ -309,6 +371,9 @@ class EventMatcher:
         platform: str,
         by_event: dict[str, list],
         titles: dict[str, str],
+        *,
+        include_fuzzy: bool,
+        should_stop: Callable[[], bool] | None,
     ) -> PlatformMatch | None:
         """Try to match a PM event to one external platform. Returns PlatformMatch or None."""
 
@@ -375,15 +440,23 @@ class EventMatcher:
             )
 
         # Strategy 3: Fuzzy text matching
+        if not include_fuzzy:
+            return None
+        if self._negative_cache_hit(pm_event.event_id, platform):
+            return None
+
         best_score = 0.0
         best_ticker = ""
         for et, ext_title in titles.items():
+            if should_stop and should_stop():
+                return None
             score = fuzz.token_set_ratio(pm_event.title, ext_title)
             if score > best_score:
                 best_score = score
                 best_ticker = et
 
         if best_score < self._fuzzy_threshold or not best_ticker:
+            self._remember_negative(pm_event.event_id, platform)
             return None
 
         ext_title = titles[best_ticker]
@@ -393,6 +466,7 @@ class EventMatcher:
                 "Fuzzy match REJECTED (year mismatch): PM '%s' vs %s '%s'",
                 pm_event.title[:50], platform, ext_title[:50],
             )
+            self._remember_negative(pm_event.event_id, platform)
             return None
 
         if _settlement_mismatch_risk(pm_event.title, ext_title):
@@ -400,6 +474,7 @@ class EventMatcher:
                 "Fuzzy match REJECTED (settlement keyword): PM '%s' vs %s '%s'",
                 pm_event.title[:50], platform, ext_title[:50],
             )
+            self._remember_negative(pm_event.event_id, platform)
             return None
 
         mks = by_event[best_ticker]
@@ -409,6 +484,7 @@ class EventMatcher:
             "Add to verified_matches.json to enable trading.",
             pm_event.title[:50], platform, ext_title[:50], best_score,
         )
+        self._remember_negative(pm_event.event_id, platform)
         return PlatformMatch(
             platform=platform,
             event_ticker=best_ticker,

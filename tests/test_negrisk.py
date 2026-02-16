@@ -343,6 +343,50 @@ class TestScanNegRiskEvents:
         assert len(result) >= 1
         assert result[0].type == OpportunityType.NEGRISK_REBALANCE
 
+    def test_large_event_subset_disabled_skips_oversized(self):
+        markets = [_make_market(f"c{i}", f"y{i}", f"n{i}") for i in range(20)]
+        event = _make_event(markets)
+        fetcher = _mock_book_fetcher({
+            f"y{i}": _make_book(f"y{i}", 0.02, 100, 0.03, 100) for i in range(20)
+        })
+
+        result = scan_negrisk_events(
+            fetcher,
+            [event],
+            0.01,
+            0.1,
+            150000,
+            30.0,
+            max_legs=15,
+            large_event_subset_enabled=False,
+        )
+        assert result == []
+
+    def test_large_event_subset_enabled_builds_bounded_basket(self):
+        markets = [_make_market(f"c{i}", f"y{i}", f"n{i}") for i in range(20)]
+        event = _make_event(markets)
+        fetcher = _mock_book_fetcher({
+            f"y{i}": _make_book(f"y{i}", 0.02, 500, 0.03, 500) for i in range(20)
+        })
+
+        result = scan_negrisk_events(
+            fetcher,
+            [event],
+            0.01,
+            0.1,
+            150000,
+            30.0,
+            max_legs=15,
+            large_event_subset_enabled=True,
+            large_event_max_subset=15,
+            large_event_tail_max_prob=0.20,
+        )
+        assert result
+        opp = result[0]
+        assert len(opp.legs) == 15
+        assert opp.reason_code == "negrisk_large_event_subset"
+        assert "large_event_subset" in opp.risk_flags
+
     def test_volume_filter_excludes_zero_volume(self):
         """Markets with zero volume should be excluded when min_volume is set."""
         m1 = Market(
@@ -520,8 +564,8 @@ class TestEventMarketCountsBypass:
         # Should find the arb
         assert len(result) >= 1
 
-    def test_skips_event_when_active_markets_less_than_expected(self):
-        """Event should be skipped when active markets < expected total."""
+    def test_allows_event_when_one_market_missing_from_expected_total(self):
+        """Event can proceed with conservative payout cap when only one market is missing."""
         m1 = _make_market("c1", "y1", "n1", "e1")
         m2 = _make_market("c2", "y2", "n2", "e1")
         # Inactive market (closed or stale)
@@ -548,5 +592,24 @@ class TestEventMarketCountsBypass:
             event_market_counts={"e1": 3},  # 3 expected, 2 active
         )
 
-        # Should skip because we have incomplete outcome set
+        # Missing one market is allowed with reduced payout cap.
+        assert len(result) >= 1
+        assert "incomplete_group:missing_1" in result[0].risk_flags
+
+    def test_skips_event_when_too_many_markets_missing_from_expected_total(self):
+        """Event should be skipped when more than two expected markets are missing."""
+        m1 = _make_market("c1", "y1", "n1", "e1")
+        m2 = _make_market("c2", "y2", "n2", "e1")
+        event = _make_event([m1, m2], "e1")
+
+        fetcher = _mock_book_fetcher({
+            "y1": _make_book("y1", 0.25, 100, 0.25, 100),
+            "y2": _make_book("y2", 0.25, 100, 0.25, 100),
+        })
+
+        result = scan_negrisk_events(
+            fetcher, [event], 0.01, 0.1, 150000, 30.0,
+            event_market_counts={"e1": 5},  # 5 expected, 2 active (3 missing)
+        )
+
         assert result == []

@@ -302,6 +302,56 @@ class TestGammaCacheEvents:
                 assert mock_build.call_count == 2
 
 
+class TestMarketsTimestamp:
+    """Verify markets_timestamp property for cache-change detection."""
+
+    def test_timestamp_zero_before_any_fetch(self):
+        """Timestamp should be 0.0 before any markets are fetched."""
+        cache = GammaCache(gamma_host="https://test.com")
+        assert cache.markets_timestamp == 0.0
+
+    def test_timestamp_set_after_fetch(self):
+        """Timestamp should be set after fetching markets."""
+        cache = GammaCache(gamma_host="https://test.com")
+        with patch("client.cache.get_all_markets") as mock_fetch:
+            mock_fetch.return_value = [_make_market()]
+            cache.get_markets()
+            assert cache.markets_timestamp > 0.0
+
+    def test_timestamp_stable_on_cache_hit(self):
+        """Timestamp should not change on cache hit (within TTL)."""
+        cache = GammaCache(gamma_host="https://test.com")
+        with patch("client.cache.get_all_markets") as mock_fetch:
+            mock_fetch.return_value = [_make_market()]
+            cache.get_markets()
+            ts1 = cache.markets_timestamp
+            cache.get_markets()  # cache hit
+            ts2 = cache.markets_timestamp
+            assert ts1 == ts2
+
+    def test_timestamp_changes_on_refresh(self):
+        """Timestamp should change when cache refreshes."""
+        cache = GammaCache(gamma_host="https://test.com")
+        with patch("client.cache.get_all_markets") as mock_fetch:
+            mock_fetch.return_value = [_make_market()]
+            cache.get_markets()
+            ts1 = cache.markets_timestamp
+            # Force refresh
+            time.sleep(0.01)
+            cache.get_markets(force_refresh=True)
+            ts2 = cache.markets_timestamp
+            assert ts2 > ts1
+
+    def test_gamma_client_exposes_timestamp(self):
+        """GammaClient should expose markets_timestamp from cache."""
+        client = GammaClient(gamma_host="https://test.com")
+        assert client.markets_timestamp == 0.0
+        with patch("client.cache.get_all_markets") as mock_fetch:
+            mock_fetch.return_value = [_make_market()]
+            client.get_markets()
+            assert client.markets_timestamp > 0.0
+
+
 class TestGammaClient:
     def test_init_creates_cache(self):
         """GammaClient should create a GammaCache instance."""

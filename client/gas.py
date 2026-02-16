@@ -6,6 +6,7 @@ CoinGecko for MATIC/USD. Results cached to avoid hammering endpoints.
 from __future__ import annotations
 
 import logging
+import random
 import time
 
 import httpx
@@ -15,6 +16,9 @@ from scanner.validation import validate_gas_gwei
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 5.0
+_FAILURE_COOLDOWN_SEC = 30.0
+_RATE_LIMIT_COOLDOWN_SEC = 120.0
+_JITTER_FRAC = 0.20
 
 
 class GasOracle:
@@ -41,12 +45,30 @@ class GasOracle:
         self._gas_ts: float = 0.0
         self._cached_matic_usd: float | None = None
         self._matic_ts: float = 0.0
+        self._gas_retry_after_ts: float = 0.0
+        self._matic_retry_after_ts: float = 0.0
+
+    @staticmethod
+    def _with_jitter(base_sec: float) -> float:
+        if base_sec <= 0:
+            return 0.0
+        return base_sec * (1.0 + random.uniform(-_JITTER_FRAC, _JITTER_FRAC))
+
+    @staticmethod
+    def _is_429(exc: Exception) -> bool:
+        return (
+            isinstance(exc, httpx.HTTPStatusError)
+            and exc.response is not None
+            and exc.response.status_code == 429
+        )
 
     def get_gas_price_gwei(self) -> float:
         """Return current gas price in gwei. Uses cache if fresh."""
         now = time.time()
         if self._cached_gas_gwei is not None and (now - self._gas_ts) < self._cache_sec:
             return self._cached_gas_gwei
+        if now < self._gas_retry_after_ts:
+            return self._cached_gas_gwei if self._cached_gas_gwei is not None else self._default_gas_gwei
         if not self._allow_network:
             return self._default_gas_gwei
 
@@ -62,10 +84,18 @@ class GasOracle:
             gwei = validate_gas_gwei(wei / 1e9, context="Polygon gas")
             self._cached_gas_gwei = gwei
             self._gas_ts = now
+            self._gas_retry_after_ts = 0.0
             logger.debug("Gas price: %.1f gwei", gwei)
             return gwei
         except Exception as e:
-            logger.warning("Gas price fetch failed, using default %.1f gwei: %s", self._default_gas_gwei, e)
+            cooldown = _RATE_LIMIT_COOLDOWN_SEC if self._is_429(e) else _FAILURE_COOLDOWN_SEC
+            self._gas_retry_after_ts = now + self._with_jitter(cooldown)
+            logger.warning(
+                "Gas price fetch failed, using default %.1f gwei for %.0fs: %s",
+                self._default_gas_gwei,
+                max(0.0, self._gas_retry_after_ts - now),
+                e,
+            )
             self._cached_gas_gwei = self._default_gas_gwei
             self._gas_ts = now
             return self._default_gas_gwei
@@ -75,6 +105,8 @@ class GasOracle:
         now = time.time()
         if self._cached_matic_usd is not None and (now - self._matic_ts) < self._cache_sec:
             return self._cached_matic_usd
+        if now < self._matic_retry_after_ts:
+            return self._cached_matic_usd if self._cached_matic_usd is not None else self._default_matic_usd
         if not self._allow_network:
             return self._default_matic_usd
 
@@ -88,10 +120,18 @@ class GasOracle:
             price = resp.json()["polygon-ecosystem-token"]["usd"]
             self._cached_matic_usd = float(price)
             self._matic_ts = now
+            self._matic_retry_after_ts = 0.0
             logger.debug("MATIC/USD: $%.4f", self._cached_matic_usd)
             return self._cached_matic_usd
         except Exception as e:
-            logger.warning("MATIC/USD fetch failed, using default $%.2f: %s", self._default_matic_usd, e)
+            cooldown = _RATE_LIMIT_COOLDOWN_SEC if self._is_429(e) else _FAILURE_COOLDOWN_SEC
+            self._matic_retry_after_ts = now + self._with_jitter(cooldown)
+            logger.warning(
+                "MATIC/USD fetch failed, using default $%.2f for %.0fs: %s",
+                self._default_matic_usd,
+                max(0.0, self._matic_retry_after_ts - now),
+                e,
+            )
             self._cached_matic_usd = self._default_matic_usd
             self._matic_ts = now
             return self._default_matic_usd

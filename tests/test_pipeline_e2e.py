@@ -424,9 +424,10 @@ class TestConfigDefaults:
         assert cfg.max_exposure_per_trade == 5000.0
         assert cfg.max_total_exposure == 50000.0
 
-    def test_min_hours_removed(self):
-        cfg = Config()
-        assert cfg.min_hours_to_resolution == 0.0
+    def test_min_hours_code_default_is_1(self):
+        """Config code default is 1.0 (.env may override at runtime)."""
+        field_info = Config.model_fields["min_hours_to_resolution"]
+        assert field_info.default == 1.0
 
     def test_slippage_params_exist(self):
         cfg = Config()
@@ -435,7 +436,7 @@ class TestConfigDefaults:
 
     def test_new_scanner_configs_exist(self):
         cfg = Config()
-        assert cfg.value_scanner_enabled is True
+        assert cfg.value_scanner_enabled is False
         assert cfg.stale_quote_enabled is True
         assert cfg.resolution_sniping_enabled is True
 
@@ -443,6 +444,43 @@ class TestConfigDefaults:
         cfg = Config()
         assert cfg.cross_platform_enabled is True
         assert cfg.latency_enabled is True
+
+
+class TestPreFilterDefaults:
+    """Verify new pre-filter defaults eliminate phantom arbs."""
+
+    def test_volume_filter_code_default_is_100(self):
+        """Config code default is 100.0 (.env may override at runtime)."""
+        # Verify the field default in the model schema
+        field_info = Config.model_fields["min_volume_filter"]
+        assert field_info.default == 100.0
+
+    def test_low_volume_markets_excluded(self):
+        from scanner.filters import apply_pre_filters
+        m_low = _make_market(volume=50.0)
+        m_high = _make_market(yes_id="y2", no_id="n2", volume=200.0)
+        result = apply_pre_filters([m_low, m_high], min_volume=100.0)
+        assert len(result) == 1
+        assert result[0].yes_token_id == "y2"
+
+    def test_negrisk_exempt_from_volume_filter(self):
+        from scanner.filters import apply_pre_filters
+        m_nr = _make_market(volume=10.0, neg_risk=True)
+        result = apply_pre_filters([m_nr], min_volume=100.0)
+        assert len(result) == 1  # negRisk exempt
+
+    def test_near_expiry_markets_excluded(self):
+        from scanner.filters import apply_pre_filters
+        from datetime import datetime, timezone, timedelta
+        soon = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+        m_soon = _make_market(end_date=soon)
+        m_far = _make_market(
+            yes_id="y2", no_id="n2",
+            end_date=(datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
+        )
+        result = apply_pre_filters([m_soon, m_far], min_hours=1.0)
+        assert len(result) == 1
+        assert result[0].yes_token_id == "y2"
 
 
 class TestParallelScannerExecution:

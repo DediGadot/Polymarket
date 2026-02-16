@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
+from scanner.labels import resolve_opportunity_label
 from scanner.scorer import ScoredOpportunity
 
 
@@ -61,7 +62,7 @@ _GUIDE: list[str] = [
     "| Column | Meaning |",
     "|--------|---------|",
     "| Type | Which scanner found it: binary_rebalance, negrisk_rebalance, latency_arb, or spike_lag. |",
-    "| Event | Human-readable event title from Polymarket (e.g. \"Will BTC be above 100k?\"). |",
+    "| Event | Market question for single-market arbs; event title for multi-market baskets. |",
     "| Profit | Net expected profit in USD after subtracting gas cost and the 2% resolution fee. |",
     "| ROI | Return on invested capital as a percentage (net_profit / required_capital * 100). |",
     "| Score | Composite score (0-1). Weights: 25% profit, 25% fill probability, 20% capital efficiency, 20% urgency, 10% competition. |",
@@ -122,6 +123,11 @@ class StatusWriter:
         total_pnl: float,
         current_exposure: float,
         scan_only: bool,
+        market_questions: dict[str, str] | None = None,
+        executable_lane_count: int | None = None,
+        research_lane_count: int | None = None,
+        executable_lane_profit: float | None = None,
+        research_lane_profit: float | None = None,
     ) -> None:
         """Overwrite the status file with current state + rolling history."""
         # Build history entry for this cycle
@@ -132,7 +138,11 @@ class StatusWriter:
         best_type = ""
         if raw_opps:
             best = max(raw_opps, key=lambda o: o.net_profit)
-            best_event_q = event_questions.get(best.event_id, best.event_id[:14])
+            best_event_q = resolve_opportunity_label(
+                best,
+                event_questions=event_questions,
+                market_questions=market_questions,
+            )
             best_type = best.type.value
 
         snap = CycleSnapshot(
@@ -156,11 +166,16 @@ class StatusWriter:
             markets_scanned=markets_scanned,
             scored_opps=scored_opps,
             event_questions=event_questions,
+            market_questions=market_questions,
             total_opps_found=total_opps_found,
             total_trades_executed=total_trades_executed,
             total_pnl=total_pnl,
             current_exposure=current_exposure,
             scan_only=scan_only,
+            executable_lane_count=executable_lane_count,
+            research_lane_count=research_lane_count,
+            executable_lane_profit=executable_lane_profit,
+            research_lane_profit=research_lane_profit,
         )
 
         with open(self.file_path, "w") as f:
@@ -174,11 +189,16 @@ class StatusWriter:
         markets_scanned: int,
         scored_opps: list[ScoredOpportunity],
         event_questions: dict[str, str],
+        market_questions: dict[str, str] | None,
         total_opps_found: int,
         total_trades_executed: int,
         total_pnl: float,
         current_exposure: float,
         scan_only: bool,
+        executable_lane_count: int | None,
+        research_lane_count: int | None,
+        executable_lane_profit: float | None,
+        research_lane_profit: float | None,
     ) -> list[str]:
         uptime = _format_duration(time.time() - self._session_start)
         ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -202,6 +222,15 @@ class StatusWriter:
             ["Opportunities (this cycle)", str(len(scored_opps))],
             ["Opportunities (session)", str(total_opps_found)],
         ]
+        if executable_lane_count is not None or research_lane_count is not None:
+            exe_count = 0 if executable_lane_count is None else executable_lane_count
+            res_count = 0 if research_lane_count is None else research_lane_count
+            state_rows.append(["Executable lane (this cycle)", f"{exe_count}"])
+            state_rows.append(["Research lane (this cycle)", f"{res_count}"])
+            if executable_lane_profit is not None:
+                state_rows.append(["Executable lane profit", f"${executable_lane_profit:.2f}"])
+            if research_lane_profit is not None:
+                state_rows.append(["Research lane profit", f"${research_lane_profit:.2f}"])
         if not scan_only:
             state_rows.append(["Trades executed", str(total_trades_executed)])
             state_rows.append(["Net P&L", f"${total_pnl:.2f}"])
@@ -216,7 +245,11 @@ class StatusWriter:
             opp_rows: list[list[str]] = []
             for i, scored in enumerate(scored_opps, 1):
                 opp = scored.opportunity
-                question = event_questions.get(opp.event_id, opp.event_id[:14])
+                question = resolve_opportunity_label(
+                    opp,
+                    event_questions=event_questions,
+                    market_questions=market_questions,
+                )
                 q_display = _truncate(question, 50)
                 type_label = opp.type.value
                 if opp.is_sell_arb:

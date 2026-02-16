@@ -3,7 +3,7 @@ Tests for scanner/maker.py -- maker strategy scanner.
 """
 
 import pytest
-from scanner.maker import scan_maker_opportunities
+from scanner.maker import scan_maker_opportunities, MakerPersistenceGate, MakerExecutionModel
 from scanner.models import (
     Market,
     OrderBook,
@@ -392,6 +392,57 @@ class TestMakerScanner:
 
         assert len(opps) == 0
 
+    def test_low_volume_market_filtered(self):
+        """Markets with volume below maker_min_volume should be rejected."""
+        market = _make_market(volume=100.0)  # Below 500 threshold
+        yes_book = _make_book("yes-123", best_bid=0.44, best_ask=0.50)
+        no_book = _make_book("no-123", best_bid=0.44, best_ask=0.50)
+
+        opps = scan_maker_opportunities(
+            [market],
+            {"yes-123": yes_book, "no-123": no_book},
+            fee_model=None,
+            min_edge_usd=0.001,
+            gas_cost_per_order=0.005,
+            min_volume=500.0,
+        )
+
+        assert len(opps) == 0
+
+    def test_high_volume_market_passes(self):
+        """Markets with volume above maker_min_volume should pass."""
+        market = _make_market(volume=1000.0)
+        yes_book = _make_book("yes-123", best_bid=0.44, best_ask=0.50)
+        no_book = _make_book("no-123", best_bid=0.44, best_ask=0.50)
+
+        opps = scan_maker_opportunities(
+            [market],
+            {"yes-123": yes_book, "no-123": no_book},
+            fee_model=None,
+            min_edge_usd=0.001,
+            gas_cost_per_order=0.005,
+            min_volume=500.0,
+        )
+
+        assert len(opps) == 1
+
+    def test_raised_depth_filter_rejects_thin_books(self):
+        """With min_depth_sets=15.0, thin books (< 15 sets) should be rejected."""
+        market = _make_market()
+        yes_book = _make_book("yes-123", best_bid=0.44, best_ask=0.50, bid_depth=10.0)
+        no_book = _make_book("no-123", best_bid=0.44, best_ask=0.50, bid_depth=10.0)
+
+        opps = scan_maker_opportunities(
+            [market],
+            {"yes-123": yes_book, "no-123": no_book},
+            fee_model=None,
+            min_edge_usd=0.001,
+            gas_cost_per_order=0.005,
+            min_depth_sets=15.0,
+        )
+
+        assert len(opps) == 0
+
     def test_near_certain_passes_when_disabled(self):
         """Near-certain market passes when min_leg_price=0.0."""
         market = _make_market()
@@ -411,3 +462,140 @@ class TestMakerScanner:
 
         # bid+tick: YES=0.91 + NO=0.02 = 0.93, edge=0.07
         assert len(opps) == 1
+
+    def test_rejects_when_taker_cross_too_expensive(self):
+        """Even with maker cost < 1, reject if crossing spread implies weak realizability."""
+        market = _make_market()
+        yes_book = _make_book("yes-123", best_bid=0.10, best_ask=0.80)
+        no_book = _make_book("no-123", best_bid=0.10, best_ask=0.70)
+
+        opps = scan_maker_opportunities(
+            [market],
+            {"yes-123": yes_book, "no-123": no_book},
+            fee_model=None,
+            min_edge_usd=0.001,
+            gas_cost_per_order=0.005,
+            max_taker_cost=1.03,
+            max_spread_ticks=200,
+        )
+        assert len(opps) == 0
+
+    def test_rejects_when_spread_too_wide(self):
+        market = _make_market()
+        yes_book = _make_book("yes-123", best_bid=0.20, best_ask=0.80)
+        no_book = _make_book("no-123", best_bid=0.20, best_ask=0.80)
+
+        opps = scan_maker_opportunities(
+            [market],
+            {"yes-123": yes_book, "no-123": no_book},
+            fee_model=None,
+            min_edge_usd=0.001,
+            gas_cost_per_order=0.005,
+            max_spread_ticks=8,
+        )
+        assert len(opps) == 0
+
+    def test_persistence_gate_requires_multiple_cycles(self):
+        gate = MakerPersistenceGate(min_consecutive_cycles=3)
+        market = _make_market()
+        yes_book = _make_book("yes-123", best_bid=0.44, best_ask=0.50)
+        no_book = _make_book("no-123", best_bid=0.44, best_ask=0.50)
+
+        books = {"yes-123": yes_book, "no-123": no_book}
+        for _ in range(2):
+            opps = scan_maker_opportunities(
+                [market],
+                books,
+                fee_model=None,
+                min_edge_usd=0.001,
+                gas_cost_per_order=0.005,
+                persistence_gate=gate,
+            )
+            assert opps == []
+
+        opps = scan_maker_opportunities(
+            [market],
+            books,
+            fee_model=None,
+            min_edge_usd=0.001,
+            gas_cost_per_order=0.005,
+            persistence_gate=gate,
+        )
+        assert len(opps) == 1
+
+    def test_execution_model_adds_fill_prob_and_expected_ev(self):
+        model = MakerExecutionModel()
+        market = _make_market(volume=5000.0)
+        yes_book = _make_book("yes-123", best_bid=0.44, best_ask=0.50, bid_depth=50.0, ask_depth=50.0)
+        no_book = _make_book("no-123", best_bid=0.44, best_ask=0.50, bid_depth=50.0, ask_depth=50.0)
+        books = {"yes-123": yes_book, "no-123": no_book}
+
+        # Warm two cycles so EWMA state is populated.
+        scan_maker_opportunities(
+            [market],
+            books,
+            min_edge_usd=0.001,
+            gas_cost_per_order=0.005,
+            execution_model=model,
+            min_pair_fill_prob=0.0,
+            max_toxicity_score=1.0,
+            min_expected_ev_usd=0.0,
+        )
+        opps = scan_maker_opportunities(
+            [market],
+            books,
+            min_edge_usd=0.001,
+            gas_cost_per_order=0.005,
+            execution_model=model,
+            min_pair_fill_prob=0.0,
+            max_toxicity_score=1.0,
+            min_expected_ev_usd=0.0,
+        )
+
+        assert len(opps) == 1
+        opp = opps[0]
+        assert 0.0 < opp.pair_fill_prob <= 1.0
+        assert 0.0 <= opp.toxicity_score <= 1.0
+        assert opp.expected_realized_net == pytest.approx(opp.net_profit)
+        assert opp.quote_theoretical_net > 0
+
+    def test_execution_model_ev_gate_can_filter(self):
+        model = MakerExecutionModel()
+        market = _make_market(volume=1000.0)
+        yes_book = _make_book("yes-123", best_bid=0.44, best_ask=0.50, bid_depth=15.0, ask_depth=15.0)
+        no_book = _make_book("no-123", best_bid=0.44, best_ask=0.50, bid_depth=15.0, ask_depth=15.0)
+        books = {"yes-123": yes_book, "no-123": no_book}
+
+        opps = scan_maker_opportunities(
+            [market],
+            books,
+            min_edge_usd=0.001,
+            gas_cost_per_order=0.005,
+            execution_model=model,
+            min_pair_fill_prob=0.0,
+            max_toxicity_score=1.0,
+            min_expected_ev_usd=10.0,  # deliberately impossible for this setup
+        )
+        assert opps == []
+
+    def test_execution_model_toxicity_gate_can_filter(self):
+        model = MakerExecutionModel()
+        market = _make_market(volume=500.0)
+        # Highly imbalanced/thin queue profile tends to increase toxicity.
+        yes_book = _make_book("yes-123", best_bid=0.30, best_ask=0.40, bid_depth=500.0, ask_depth=2.0)
+        no_book = _make_book("no-123", best_bid=0.60, best_ask=0.70, bid_depth=2.0, ask_depth=500.0)
+        books = {"yes-123": yes_book, "no-123": no_book}
+
+        opps = scan_maker_opportunities(
+            [market],
+            books,
+            min_edge_usd=0.001,
+            gas_cost_per_order=0.005,
+            execution_model=model,
+            min_pair_fill_prob=0.0,
+            max_toxicity_score=0.05,  # strict threshold to force reject
+            min_expected_ev_usd=0.0,
+            max_taker_cost=1.20,
+            max_spread_ticks=20,
+        )
+        assert opps == []

@@ -274,6 +274,27 @@ class TestScanResultWithOpps:
         assert "$2.14" in joined
         assert "$1.87" in joined
 
+    def test_market_question_overrides_event_title_for_single_market(self, caplog):
+        opp = _make_opp(event_id="evt_wrong")
+        scored = [_make_scored(opp, 0.72)]
+        msgs = _collect_logs(
+            caplog,
+            print_scan_result,
+            scored_opps=scored,
+            event_questions={"evt_wrong": "Wrong Event Title"},
+            market_questions={"tok_0": "Actual market question?", "tok_1": "Actual market question?"},
+            scanner_counts=None,
+            scan_elapsed=1.0,
+            fetch_elapsed=0.5,
+            markets_count=100,
+            binary_count=80,
+            negrisk_event_count=2,
+            negrisk_market_count=20,
+        )
+        joined = "\n".join(msgs)
+        assert "Actual market question?" in joined
+        assert "Wrong Event Title" not in joined
+
     def test_scanner_breakdown(self, caplog):
         scored = self._make_three_opps()
         msgs = _collect_logs(
@@ -312,6 +333,27 @@ class TestScanResultWithOpps:
         joined = "\n".join(msgs)
         assert "Best:" in joined
         assert "Total capital needed:" in joined
+
+    def test_shows_lane_counts(self, caplog):
+        scored = self._make_three_opps()
+        msgs = _collect_logs(
+            caplog,
+            print_scan_result,
+            scored_opps=scored,
+            event_questions={},
+            scanner_counts=None,
+            scan_elapsed=1.0,
+            fetch_elapsed=0.5,
+            markets_count=100,
+            binary_count=80,
+            negrisk_event_count=2,
+            negrisk_market_count=20,
+            executable_lane_count=2,
+            research_lane_count=1,
+        )
+        joined = "\n".join(msgs)
+        assert "Lanes: 2 executable" in joined
+        assert "1 research" in joined
 
     def test_shows_scores(self, caplog):
         scored = self._make_three_opps()

@@ -45,6 +45,7 @@ def slippage_ceiling(
     side: Side,
     slippage_fraction: float = 0.4,
     max_slippage_pct: float = 3.0,
+    fee_pct: float = 0.0,
 ) -> float:
     """
     Compute a price ceiling (for BUY) or floor (for SELL) proportional to
@@ -55,8 +56,14 @@ def slippage_ceiling(
 
     slippage_fraction: fraction of edge to allow as slippage (0.4 = 40%).
     max_slippage_pct: hard cap on slippage percentage.
+    fee_pct: fee percentage to deduct from edge before computing slippage budget.
+        E.g. 2.0 for Polymarket's 2% resolution fee. Tightens slippage ceiling
+        so scanners don't accept fills that would be unprofitable after fees.
     """
-    allowed_slip_pct = min(abs(edge_pct) * slippage_fraction, max_slippage_pct)
+    net_edge = abs(edge_pct) - fee_pct
+    if net_edge <= 0:
+        net_edge = 0.0
+    allowed_slip_pct = min(net_edge * slippage_fraction, max_slippage_pct)
     slip_ratio = allowed_slip_pct / 100.0
     if side == Side.BUY:
         return base_price * (1.0 + slip_ratio)

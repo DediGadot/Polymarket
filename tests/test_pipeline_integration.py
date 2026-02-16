@@ -12,6 +12,7 @@ from scanner.negrisk import scan_negrisk_events
 from scanner.models import (
     Market,
     Event,
+    Opportunity,
     OrderBook,
     PriceLevel,
     OpportunityType,
@@ -28,8 +29,8 @@ def _cfg():
         polymarket_profile_address="0xtest",
         min_profit_usd=0.01,
         min_roi_pct=0.1,
-        max_exposure_per_trade=5000,
-        max_total_exposure=50000,
+        max_exposure_per_trade=50,
+        max_total_exposure=500,
         paper_trading=True,
     )
 
@@ -65,8 +66,8 @@ class TestFullPipelineBinaryArb:
         )]
 
         books = {
-            "y1": _make_book("y1", 0.39, 200, 0.40, 200),
-            "n1": _make_book("n1", 0.39, 200, 0.40, 200),
+            "y1": _make_book("y1", 0.39, 500, 0.40, 500),
+            "n1": _make_book("n1", 0.39, 500, 0.40, 500),
         }
         fetcher = _mock_book_fetcher(books)
 
@@ -81,11 +82,7 @@ class TestFullPipelineBinaryArb:
         assert opp.type == OpportunityType.BINARY_REBALANCE
         assert opp.expected_profit_per_set == pytest.approx(0.20, abs=0.01)
 
-        # Step 2: Safety checks
-        verify_prices_fresh(opp, books)
-        verify_depth(opp, books)
-
-        # Step 3: Size
+        # Step 2: Size (before depth check, matching real pipeline order)
         size = compute_position_size(
             opp,
             bankroll=cfg.max_total_exposure,
@@ -94,6 +91,21 @@ class TestFullPipelineBinaryArb:
             current_exposure=0,
         )
         assert size > 0
+
+        # Step 3: Safety checks (on sized opportunity, like real pipeline)
+        from scanner.models import LegOrder
+        sized_opp = Opportunity(
+            type=opp.type, event_id=opp.event_id,
+            legs=tuple(LegOrder(l.token_id, l.side, l.price, size) for l in opp.legs),
+            expected_profit_per_set=opp.expected_profit_per_set,
+            net_profit_per_set=opp.net_profit_per_set,
+            max_sets=size, gross_profit=opp.net_profit_per_set * size,
+            estimated_gas_cost=opp.estimated_gas_cost,
+            net_profit=opp.net_profit_per_set * size - opp.estimated_gas_cost,
+            roi_pct=opp.roi_pct, required_capital=opp.required_capital,
+        )
+        verify_prices_fresh(sized_opp, books)
+        verify_depth(sized_opp, books)
 
         # Step 4: Execute (paper)
         result = execute_opportunity(client, opp, size, paper_trading=True)
@@ -122,7 +134,7 @@ class TestFullPipelineNegRiskArb:
         ]
         event = Event(event_id="e1", title="4-way race", markets=tuple(markets), neg_risk=True)
 
-        books = {f"y{i}": _make_book(f"y{i}", 0.19, 150, 0.20, 150) for i in range(4)}
+        books = {f"y{i}": _make_book(f"y{i}", 0.19, 500, 0.20, 500) for i in range(4)}
         fetcher = _mock_book_fetcher(books)
 
         # Scan
@@ -137,11 +149,7 @@ class TestFullPipelineNegRiskArb:
         assert opp.expected_profit_per_set == pytest.approx(0.20, abs=0.01)
         assert len(opp.legs) == 4
 
-        # Safety
-        verify_prices_fresh(opp, books)
-        verify_depth(opp, books)
-
-        # Size
+        # Size (before depth check, matching real pipeline order)
         size = compute_position_size(
             opp,
             bankroll=cfg.max_total_exposure,
@@ -150,6 +158,21 @@ class TestFullPipelineNegRiskArb:
             current_exposure=0,
         )
         assert size > 0
+
+        # Safety (on sized opportunity, like real pipeline)
+        from scanner.models import LegOrder
+        sized_opp = Opportunity(
+            type=opp.type, event_id=opp.event_id,
+            legs=tuple(LegOrder(l.token_id, l.side, l.price, size) for l in opp.legs),
+            expected_profit_per_set=opp.expected_profit_per_set,
+            net_profit_per_set=opp.net_profit_per_set,
+            max_sets=size, gross_profit=opp.net_profit_per_set * size,
+            estimated_gas_cost=opp.estimated_gas_cost,
+            net_profit=opp.net_profit_per_set * size - opp.estimated_gas_cost,
+            roi_pct=opp.roi_pct, required_capital=opp.required_capital,
+        )
+        verify_prices_fresh(sized_opp, books)
+        verify_depth(sized_opp, books)
 
         # Execute (paper)
         result = execute_opportunity(client, opp, size, paper_trading=True)

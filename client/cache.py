@@ -145,6 +145,16 @@ class GammaCache:
             self._event_market_counts_timestamp = 0.0
         logger.debug("Gamma cache cleared")
 
+    @property
+    def markets_timestamp(self) -> float:
+        """Timestamp of the last markets fetch (0.0 if never fetched).
+
+        Callers can compare across cycles to detect cache refreshes:
+        if timestamp hasn't changed, the underlying market data is identical.
+        """
+        with self._cache_lock:
+            return self._markets_timestamp
+
     def _is_markets_stale_unlocked(self) -> bool:
         """Check if markets cache is stale. Caller must hold lock."""
         return time.time() - self._markets_timestamp > _GAMMA_API_TTL
@@ -176,6 +186,11 @@ class GammaClient:
     def __init__(self, gamma_host: str = "https://api.gamma.io"):
         self.gamma_host = gamma_host
         self._cache = GammaCache(gamma_host)
+
+    @property
+    def markets_timestamp(self) -> float:
+        """Timestamp of the last markets fetch from the underlying cache."""
+        return self._cache.markets_timestamp
 
     def get_markets(self, force_refresh: bool = False) -> list[Market]:
         """Get markets from cache or API.

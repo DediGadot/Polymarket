@@ -307,6 +307,98 @@ class TestDollarsToCents:
             dollars_to_cents(1.50)
 
 
+class TestRateLimiting:
+    @respx.mock
+    def test_429_retries_and_succeeds(self):
+        """Should retry on 429 and succeed when the next attempt works."""
+        auth = _mock_auth()
+        client = KalshiClient(auth, host="https://test.kalshi.com/trade-api/v2")
+
+        import client.kalshi as kalshi_mod
+        original_backoff = kalshi_mod._429_BACKOFF_SEC
+        kalshi_mod._429_BACKOFF_SEC = 0.01  # speed up test
+
+        try:
+            respx.get("https://test.kalshi.com/trade-api/v2/markets").mock(
+                side_effect=[
+                    httpx.Response(429, json={"error": "rate limited"}),
+                    httpx.Response(200, json={"markets": [], "cursor": ""}),
+                ]
+            )
+
+            markets, cursor = client.get_markets()
+            assert markets == []
+        finally:
+            kalshi_mod._429_BACKOFF_SEC = original_backoff
+
+    @respx.mock
+    def test_429_exhausts_retries(self):
+        """Should raise after exhausting all retries."""
+        auth = _mock_auth()
+        client = KalshiClient(auth, host="https://test.kalshi.com/trade-api/v2")
+
+        import client.kalshi as kalshi_mod
+        original_backoff = kalshi_mod._429_BACKOFF_SEC
+        kalshi_mod._429_BACKOFF_SEC = 0.01
+
+        try:
+            respx.get("https://test.kalshi.com/trade-api/v2/markets").mock(
+                return_value=httpx.Response(429, json={"error": "rate limited"})
+            )
+
+            with pytest.raises(httpx.HTTPStatusError):
+                client.get_markets()
+        finally:
+            kalshi_mod._429_BACKOFF_SEC = original_backoff
+
+    @respx.mock
+    def test_pagination_rate_limited(self):
+        """get_all_markets should not fire requests faster than the rate limit."""
+        import time as time_mod
+        auth = _mock_auth()
+        client = KalshiClient(auth, host="https://test.kalshi.com/trade-api/v2")
+
+        call_times = []
+        original_sleep = time_mod.sleep
+
+        def tracking_sleep(secs):
+            call_times.append(secs)
+            # Don't actually sleep in tests
+
+        import client.kalshi as kalshi_mod
+        original_delay = kalshi_mod._PAGE_DELAY_SEC
+        kalshi_mod._PAGE_DELAY_SEC = 0.05
+
+        try:
+            from unittest.mock import patch
+            respx.get("https://test.kalshi.com/trade-api/v2/markets").mock(
+                side_effect=[
+                    httpx.Response(200, json={
+                        "markets": [{"ticker": "M1", "event_ticker": "E1", "title": "", "subtitle": "", "yes_sub_title": "", "no_sub_title": "", "status": "open", "result": ""}],
+                        "cursor": "page2",
+                    }),
+                    httpx.Response(200, json={
+                        "markets": [{"ticker": "M2", "event_ticker": "E1", "title": "", "subtitle": "", "yes_sub_title": "", "no_sub_title": "", "status": "open", "result": ""}],
+                        "cursor": "page3",
+                    }),
+                    httpx.Response(200, json={
+                        "markets": [{"ticker": "M3", "event_ticker": "E1", "title": "", "subtitle": "", "yes_sub_title": "", "no_sub_title": "", "status": "open", "result": ""}],
+                        "cursor": "",
+                    }),
+                ]
+            )
+
+            with patch("time.sleep", tracking_sleep):
+                markets = client.get_all_markets()
+
+            assert len(markets) == 3
+            # Should have slept between pages (2 sleeps for 3 pages)
+            assert len(call_times) == 2
+            assert all(t == pytest.approx(0.05) for t in call_times)
+        finally:
+            kalshi_mod._PAGE_DELAY_SEC = original_delay
+
+
 class TestGetBalance:
     @respx.mock
     def test_balance_converts_cents_to_dollars(self):

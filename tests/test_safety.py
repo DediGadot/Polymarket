@@ -18,6 +18,7 @@ from executor.safety import (
     verify_inventory,
     verify_cross_platform_books,
     verify_platform_limits,
+    verify_min_confidence,
 )
 from client.data import PositionTracker
 from scanner.models import (
@@ -289,6 +290,36 @@ class TestVerifyGasReasonable:
                 max_gas_profit_ratio=0.50,
                 size=1.0,
             )
+
+
+class TestVerifyDepthMargin:
+    def test_depth_at_1x_fails_with_1_2x_margin(self):
+        """Depth exactly equal to size should fail with 1.2x margin."""
+        legs = (LegOrder("y1", Side.BUY, 0.45, 100),)
+        opp = _make_opp(legs=legs)
+        books = {
+            "y1": _make_book("y1", 0.44, 200, 0.45, 100),  # exactly 100 available
+        }
+        with pytest.raises(SafetyCheckFailed, match="Insufficient ask depth"):
+            verify_depth(opp, books, depth_margin=1.2)
+
+    def test_depth_at_1_2x_passes(self):
+        """Depth at 1.2x of size should pass with 1.2x margin."""
+        legs = (LegOrder("y1", Side.BUY, 0.45, 100),)
+        opp = _make_opp(legs=legs)
+        books = {
+            "y1": _make_book("y1", 0.44, 200, 0.45, 120),  # 120 >= 100*1.2
+        }
+        verify_depth(opp, books, depth_margin=1.2)  # should not raise
+
+    def test_depth_margin_1_0_passes_exact(self):
+        """With margin=1.0, exact depth should pass."""
+        legs = (LegOrder("y1", Side.BUY, 0.45, 100),)
+        opp = _make_opp(legs=legs)
+        books = {
+            "y1": _make_book("y1", 0.44, 200, 0.45, 100),
+        }
+        verify_depth(opp, books, depth_margin=1.0)  # should not raise
 
 
 class TestVerifyDepthMultiLevel:
@@ -605,8 +636,46 @@ class TestVerifyEdgeIntact:
                 asks=(PriceLevel(0.40, 0.1), PriceLevel(0.51, 100)),
             ),
         }
-        with pytest.raises(SafetyCheckFailed, match="Edge eroded"):
+        with pytest.raises(SafetyCheckFailed, match="Edge gone"):
             verify_edge_intact(thin_opp, books)
+
+    def test_worst_fill_rejects_arb_that_passes_vwap(self):
+        """Arb passes VWAP average edge check but fails worst-fill.
+
+        Book: 0.8 shares at 0.40, then 100 shares at 0.65.
+        For 1 set: VWAP = (0.8*0.40 + 0.2*0.65)/1.0 = 0.45, cost = 0.45+0.45 = 0.90 (passes).
+        Worst-fill = 0.65 (touches level 2), cost = 0.65+0.65 = 1.30 > 1.0 (fails).
+        """
+        opp = Opportunity(
+            type=OpportunityType.BINARY_REBALANCE,
+            event_id="e1",
+            legs=(
+                LegOrder("y1", Side.BUY, 0.40, 100),
+                LegOrder("n1", Side.BUY, 0.40, 100),
+            ),
+            expected_profit_per_set=0.10,
+            net_profit_per_set=0.10,
+            max_sets=100,
+            gross_profit=10.0,
+            estimated_gas_cost=0.01,
+            net_profit=9.99,
+            roi_pct=12.5,
+            required_capital=80.0,
+        )
+        books = {
+            "y1": OrderBook(
+                token_id="y1",
+                bids=(PriceLevel(0.39, 200),),
+                asks=(PriceLevel(0.40, 0.8), PriceLevel(0.65, 100)),
+            ),
+            "n1": OrderBook(
+                token_id="n1",
+                bids=(PriceLevel(0.39, 200),),
+                asks=(PriceLevel(0.40, 0.8), PriceLevel(0.65, 100)),
+            ),
+        }
+        with pytest.raises(SafetyCheckFailed, match="Edge gone"):
+            verify_edge_intact(opp, books)
 
     def test_vwap_accepts_deep_book(self):
         """Deep book with consistent pricing should pass VWAP check."""
@@ -681,6 +750,36 @@ class TestVerifyInventory:
         tracker._last_fetch = time.time()
         with pytest.raises(SafetyCheckFailed, match="Insufficient inventory"):
             verify_inventory(tracker, opp, size=100)
+
+    def test_platform_filter_checks_only_selected_venue(self):
+        legs = (
+            LegOrder("pm_yes", Side.SELL, 0.55, 100, platform="polymarket"),
+            LegOrder("K-TEST", Side.SELL, 0.60, 100, platform="kalshi"),
+        )
+        opp = _make_opp(legs=legs)
+        tracker = PositionTracker(profile_address="0xfake")
+        tracker._positions = {"pm_yes": 150.0, "K-TEST": 0.0}
+        tracker._last_fetch = time.time()
+        verify_inventory(tracker, opp, size=100, platform_filter={"polymarket"})
+
+
+class TestVerifyMinConfidence:
+    def test_high_confidence_passes(self):
+        """Confidence above gate should pass."""
+        verify_min_confidence(0.80, 0.50, "evt1")  # should not raise
+
+    def test_low_confidence_raises(self):
+        """Confidence below gate should raise SafetyCheckFailed."""
+        with pytest.raises(SafetyCheckFailed, match="Low confidence"):
+            verify_min_confidence(0.30, 0.50, "evt1")
+
+    def test_exact_threshold_passes(self):
+        """Confidence exactly at gate should pass."""
+        verify_min_confidence(0.50, 0.50, "evt1")  # should not raise
+
+    def test_zero_gate_always_passes(self):
+        """Gate of 0.0 should let everything through."""
+        verify_min_confidence(0.0, 0.0, "evt1")  # should not raise
 
 
 class TestVerifyCrossPlatformBooks:

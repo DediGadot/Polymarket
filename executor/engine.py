@@ -18,6 +18,7 @@ from client.clob import (
     cancel_order,
 )
 from client.platform import PlatformClient
+from executor.presigner import OrderPresigner
 from executor.tick_size import quantize_price
 from scanner.models import (
     Opportunity,
@@ -38,6 +39,42 @@ class UnwindFailed(Exception):
     pass
 
 
+def _sign_order(
+    client: ClobClient,
+    leg: LegOrder,
+    size: float,
+    neg_risk: bool,
+    presigner: OrderPresigner | None = None,
+) -> object:
+    """
+    Sign a limit order, using presigner cache if available.
+    Falls back to create_limit_order() on cache miss or when presigner is None.
+    """
+    tick_size = float(leg.tick_size) if hasattr(leg, 'tick_size') and leg.tick_size else 0.01
+    quantized_price = quantize_price(leg.price, tick_size)
+
+    if presigner is not None:
+        signed = presigner.get_or_sign(
+            token_id=leg.token_id,
+            side=leg.side.value,
+            price=quantized_price,
+            size=size,
+            neg_risk=neg_risk,
+            tick_size=leg.tick_size or "0.01",
+        )
+        if signed is not None:
+            return signed
+
+    return create_limit_order(
+        client,
+        token_id=leg.token_id,
+        side=leg.side,
+        price=quantized_price,
+        size=size,
+        neg_risk=neg_risk,
+    )
+
+
 def execute_opportunity(
     client: ClobClient,
     opportunity: Opportunity,
@@ -48,6 +85,7 @@ def execute_opportunity(
     kalshi_client: PlatformClient | None = None,
     platform_clients: dict[str, PlatformClient] | None = None,
     cross_platform_deadline_sec: float = 5.0,
+    presigner: OrderPresigner | None = None,
 ) -> TradeResult:
     """
     Execute an arbitrage opportunity. Places all leg orders, tracks fills.
@@ -57,6 +95,7 @@ def execute_opportunity(
     use_fak: Use Fill-and-Kill orders instead of GTC (immediate fill or cancel).
     platform_clients: Dict of platform_name -> PlatformClient for cross-platform arbs.
     kalshi_client: Backward-compat alias; merged into platform_clients if provided.
+    presigner: Optional OrderPresigner for cached pre-signed orders (reduces latency).
     """
     start_time = time.time()
     order_type = OrderType.FAK if use_fak else OrderType.GTC
@@ -65,13 +104,13 @@ def execute_opportunity(
         return _paper_execute(opportunity, size, start_time)
 
     if opportunity.type == OpportunityType.BINARY_REBALANCE:
-        return _execute_binary(client, opportunity, size, start_time, order_type, order_timeout_sec)
+        return _execute_binary(client, opportunity, size, start_time, order_type, order_timeout_sec, presigner=presigner)
     elif opportunity.type == OpportunityType.NEGRISK_REBALANCE:
-        return _execute_negrisk(client, opportunity, size, start_time, order_type, order_timeout_sec)
+        return _execute_negrisk(client, opportunity, size, start_time, order_type, order_timeout_sec, presigner=presigner)
     elif opportunity.type == OpportunityType.LATENCY_ARB:
-        return _execute_single_leg(client, opportunity, size, start_time, order_type)
+        return _execute_single_leg(client, opportunity, size, start_time, order_type, presigner=presigner)
     elif opportunity.type == OpportunityType.SPIKE_LAG:
-        return _execute_negrisk(client, opportunity, size, start_time, order_type, order_timeout_sec)
+        return _execute_negrisk(client, opportunity, size, start_time, order_type, order_timeout_sec, presigner=presigner)
     elif opportunity.type == OpportunityType.CROSS_PLATFORM_ARB:
         from executor.cross_platform import execute_cross_platform
         # Build platform_clients dict, merging backward-compat kalshi_client
@@ -85,6 +124,11 @@ def execute_opportunity(
             paper_trading=paper_trading, use_fak=use_fak,
             deadline_sec=cross_platform_deadline_sec,
         )
+    elif opportunity.type == OpportunityType.CORRELATION_ARB:
+        # Correlation arbs have 2 legs from different events, executed like binary
+        return _execute_binary(client, opportunity, size, start_time, order_type, order_timeout_sec, presigner=presigner)
+    elif opportunity.type == OpportunityType.MAKER_REBALANCE:
+        raise ValueError("MAKER_REBALANCE execution requires maker_lifecycle integration")
     else:
         raise ValueError(f"Unknown opportunity type: {opportunity.type}")
 
@@ -126,6 +170,7 @@ def _execute_binary(
     start_time: float,
     order_type: OrderType = OrderType.FAK,
     order_timeout_sec: float = 5.0,
+    presigner: OrderPresigner | None = None,
 ) -> TradeResult:
     """
     Execute a binary rebalancing trade.
@@ -137,16 +182,7 @@ def _execute_binary(
     signed_orders = []
     for leg in opportunity.legs:
         neg_risk = False  # binary markets are not negRisk
-        tick_size = float(leg.tick_size) if hasattr(leg, 'tick_size') and leg.tick_size else 0.01
-        quantized_price = quantize_price(leg.price, tick_size)
-        signed = create_limit_order(
-            client,
-            token_id=leg.token_id,
-            side=leg.side,
-            price=quantized_price,
-            size=size,
-            neg_risk=neg_risk,
-        )
+        signed = _sign_order(client, leg, size, neg_risk, presigner=presigner)
         signed_orders.append((signed, order_type))
 
     # Submit both as a batch
@@ -245,6 +281,7 @@ def _execute_negrisk(
     start_time: float,
     order_type: OrderType = OrderType.FAK,
     order_timeout_sec: float = 5.0,
+    presigner: OrderPresigner | None = None,
 ) -> TradeResult:
     """
     Execute a NegRisk rebalancing trade.
@@ -256,16 +293,7 @@ def _execute_negrisk(
     # Build all signed orders
     signed_orders = []
     for leg in legs:
-        tick_size = float(leg.tick_size) if hasattr(leg, 'tick_size') and leg.tick_size else 0.01
-        quantized_price = quantize_price(leg.price, tick_size)
-        signed = create_limit_order(
-            client,
-            token_id=leg.token_id,
-            side=leg.side,
-            price=quantized_price,
-            size=size,
-            neg_risk=True,
-        )
+        signed = _sign_order(client, leg, size, neg_risk=True, presigner=presigner)
         signed_orders.append((signed, order_type))
 
     # Submit in batches of MAX_BATCH_SIZE
@@ -366,6 +394,7 @@ def _execute_single_leg(
     size: float,
     start_time: float,
     order_type: OrderType = OrderType.FAK,
+    presigner: OrderPresigner | None = None,
 ) -> TradeResult:
     """
     Execute a single-leg trade (latency arb, spike lag).
@@ -374,16 +403,7 @@ def _execute_single_leg(
     assert len(opportunity.legs) == 1, f"Single-leg trade must have 1 leg, got {len(opportunity.legs)}"
     leg = opportunity.legs[0]
 
-    tick_size = float(leg.tick_size) if hasattr(leg, 'tick_size') and leg.tick_size else 0.01
-    quantized_price = quantize_price(leg.price, tick_size)
-    signed = create_limit_order(
-        client,
-        token_id=leg.token_id,
-        side=leg.side,
-        price=quantized_price,
-        size=size,
-        neg_risk=False,
-    )
+    signed = _sign_order(client, leg, size, neg_risk=False, presigner=presigner)
     resp = post_order(client, signed, order_type)
 
     oid = resp.get("orderID", resp.get("order_id", "unknown_0"))

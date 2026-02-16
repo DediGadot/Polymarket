@@ -13,6 +13,7 @@ import time
 from collections import Counter
 
 from config import Config, active_platforms
+from scanner.labels import resolve_opportunity_label
 from scanner.models import OpportunityType
 from scanner.scorer import ScoredOpportunity
 
@@ -118,6 +119,11 @@ def print_scan_result(
     negrisk_event_count: int,
     negrisk_market_count: int,
     strategy_name: str = "",
+    market_questions: dict[str, str] | None = None,
+    actionable_now_count: int = 0,
+    maker_candidate_count: int = 0,
+    executable_lane_count: int = 0,
+    research_lane_count: int = 0,
 ) -> None:
     """
     Emit the boxed scan summary.
@@ -138,6 +144,20 @@ def print_scan_result(
     # Scan timing + strategy
     strategy_tag = f"  [strategy={strategy_name}]" if strategy_name else ""
     logger.info("  Scanned in %.1fs%s", scan_elapsed, strategy_tag)
+    if actionable_now_count or maker_candidate_count:
+        logger.info(
+            "  Executable now: %d taker BUY %s Maker candidates: %d",
+            actionable_now_count,
+            _VERT_SEP,
+            maker_candidate_count,
+        )
+    if executable_lane_count or research_lane_count:
+        logger.info(
+            "  Lanes: %d executable %s %d research",
+            executable_lane_count,
+            _VERT_SEP,
+            research_lane_count,
+        )
 
     if not scored_opps:
         logger.info("  %s No opportunities found", _TOP)
@@ -158,7 +178,11 @@ def print_scan_result(
     # Table rows
     for idx, scored in enumerate(scored_opps, 1):
         opp = scored.opportunity
-        question = event_questions.get(opp.event_id, opp.event_id[:14])
+        question = resolve_opportunity_label(
+            opp,
+            event_questions=event_questions,
+            market_questions=market_questions,
+        )
         question = _truncate(question)
         logger.info(
             "  %s  %-3d %-18s %-50s %7s %6.2f%% %7.2f %4d",

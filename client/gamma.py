@@ -143,11 +143,14 @@ def get_event_market_counts(gamma_host: str) -> dict[str, int]:
             markets = event.get("markets") or []
             # Group markets by negRiskMarketID within this event
             by_nrm: dict[str, int] = {}
+            event_id = str(event.get("id", ""))
             for m in markets:
                 nrm_id = str(m.get("negRiskMarketID", m.get("neg_risk_market_id", "")))
-                if not nrm_id:
+                # Fallback to event_id if negRiskMarketID is missing
+                key = nrm_id if nrm_id else event_id
+                if not key:
                     continue
-                by_nrm[nrm_id] = by_nrm.get(nrm_id, 0) + 1
+                by_nrm[key] = by_nrm.get(key, 0) + 1
             for nrm_id, total in by_nrm.items():
                 counts[nrm_id] = total
         if len(page) < page_size:

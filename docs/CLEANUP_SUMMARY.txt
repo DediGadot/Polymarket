@@ -1,0 +1,80 @@
+DEAD CODE CLEANUP SUMMARY
+=========================
+Analysis Date: 2026-02-14
+Codebase: Polymarket Arbitrage Bot (164 Python files)
+
+IMMEDIATE SAFE DELETIONS (Phase 1)
+===================================
+
+1. scanner/fees_v2.py (203 lines)
+   - Unused alternate fee model implementation
+   - Zero references in entire codebase
+   - Active file is scanner/fees.py
+
+2. executor/maker_lifecycle.py (200+ lines)
+   - GTC maker order lifecycle manager
+   - Never imported anywhere
+   - Incompatible with current FAK-only execution
+
+Total Phase 1: 2 files, ~403 lines, SAFE TO DELETE
+
+REVIEW BEFORE DELETION (Phase 2)
+=================================
+
+3. executor/cross_platform_v2.py (577 lines)
+   - Unused alternate implementation (v1 is active)
+   - May contain valuable improvements
+   - Action: Diff against v1, backport improvements, then delete
+
+Total Phase 2: 1 file, ~140-577 lines, MEDIUM RISK (review first)
+
+TYPE SAFETY FIXES (Phase 3)
+============================
+
+4 instances of "# type: ignore" to fix:
+1. tests/test_kalshi_cache.py:87 - frozen dataclass mutation
+2. tests/test_fanatics.py:54 - frozen dataclass mutation
+3. executor/safety.py:445 - dict type mismatch
+4. executor/safety.py:447 - dict type mismatch
+
+Fix: Use dataclasses.replace(), add proper type annotations
+
+TOTAL CLEANUP POTENTIAL
+=======================
+- Files to delete: 3
+- Lines to remove: 540-980
+- Type issues to fix: 4
+- Unused dependencies: 0
+- TODO/FIXME/HACK comments: 0
+- Code duplication: None found
+
+WHAT TO KEEP (Intentional)
+===========================
+- scanner/value.py - Disabled by design (documented)
+- scanner/resolution.py - Active feature
+- scanner/stale_quote.py - Active feature
+- client/fanatics.py - Future integration (API pending)
+- client/kalshi_cache.py - NEW CODE (add to git)
+
+QUICK START COMMANDS
+====================
+
+# Create feature branch
+git checkout -b refactor/dead-code-cleanup
+
+# Phase 1: Safe deletions
+git rm scanner/fees_v2.py executor/maker_lifecycle.py
+uv sync --all-extras
+PYTHONPATH=. uv run pytest tests/ -v
+git commit -m "refactor: remove unused files (403 lines)"
+
+# Phase 2: Review v2 file
+diff -u executor/cross_platform.py executor/cross_platform_v2.py | less
+# Then manually backport or delete
+
+# Phase 3: Fix type ignores
+# Edit files manually
+PYTHONPATH=. uv run pytest tests/ -v
+git commit -m "fix: improve type safety"
+
+See docs/DELETION_LOG.md and docs/REFACTOR_ANALYSIS.md for full details.

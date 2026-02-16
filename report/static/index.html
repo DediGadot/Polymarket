@@ -1,0 +1,1352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Polymarket Pipeline Dashboard</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0d1117;--surface:#161b22;--border:#30363d;--text:#c9d1d9;--text-muted:#8b949e;--accent:#58a6ff;--green:#3fb950;--red:#f85149;--yellow:#d29922;--blue:#58a6ff}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.5;font-size:14px}
+a{color:var(--accent);text-decoration:none}
+h2{font-size:16px;font-weight:600;margin-bottom:12px;color:var(--text)}
+h3{font-size:14px;font-weight:500;color:var(--text-muted);margin-bottom:8px}
+
+/* Session selector */
+.session-bar{background:var(--surface);border-bottom:1px solid var(--border);padding:8px 16px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:100}
+.session-bar label{color:var(--text-muted);font-size:13px}
+.session-bar select{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:13px}
+.session-bar .status{margin-left:auto;font-size:12px;color:var(--text-muted)}
+.session-bar .live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* Health banner */
+.health-banner{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;padding:16px;background:var(--surface);border-bottom:1px solid var(--border)}
+.kpi-card{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center}
+.kpi-card .label{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px}
+.kpi-card .value{font-size:24px;font-weight:700;margin:4px 0}
+.kpi-card .sub{font-size:11px;color:var(--text-muted)}
+.value-green{color:var(--green)}.value-red{color:var(--red)}.value-yellow{color:var(--yellow)}.value-blue{color:var(--blue)}
+
+/* Action center */
+.action-center{padding:16px;background:linear-gradient(180deg,rgba(88,166,255,.08),rgba(88,166,255,0));border-bottom:1px solid var(--border)}
+.action-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.action-head h2{margin:0}
+.quick-links{display:flex;gap:8px;flex-wrap:wrap}
+.quick-links button{background:rgba(88,166,255,.12);color:var(--text);border:1px solid rgba(88,166,255,.35);padding:4px 10px;border-radius:999px;font-size:12px;cursor:pointer}
+.quick-links button:hover{background:rgba(88,166,255,.2)}
+.action-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.action-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.action-card .priority{font-size:11px;text-transform:uppercase;color:var(--text-muted);letter-spacing:.4px}
+.action-card h3{font-size:14px;color:var(--text);margin:0}
+.action-card p{font-size:12px;color:var(--text-muted)}
+.action-card .impact{font-size:12px;color:var(--yellow)}
+.deep-link{background:transparent;border:1px solid var(--border);color:var(--accent);padding:4px 8px;border-radius:6px;cursor:pointer;font-size:12px}
+.deep-link:hover{border-color:var(--accent)}
+.action-card .deep-link{align-self:flex-start}
+.action-card.empty{justify-content:center}
+.section-flash{box-shadow:0 0 0 2px rgba(88,166,255,.45)}
+.tip{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid var(--border);color:var(--text-muted);font-size:10px;cursor:help;position:relative;margin-left:4px;vertical-align:middle}
+.tip:after{content:attr(data-tip);position:absolute;left:50%;transform:translateX(-50%);bottom:20px;opacity:0;pointer-events:none;transition:opacity .15s ease;min-width:180px;max-width:260px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:11px;line-height:1.4;z-index:110}
+.tip:hover:after{opacity:1}
+.deep-dive-panel{position:fixed;bottom:0;left:0;right:0;z-index:200;padding:12px 16px;background:var(--surface);border-top:2px solid var(--accent);box-shadow:0 -4px 20px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:8px;max-height:30vh;overflow-y:auto}
+.deep-dive-head{display:flex;align-items:center;justify-content:space-between}
+.deep-dive-head h3{margin:0;color:var(--text)}
+.deep-dive-body{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:12px;color:var(--text-muted)}
+.deep-pill{padding:4px 8px;border-radius:999px;background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.25)}
+.clickable-row{cursor:pointer}
+.clickable-row:hover{background:rgba(88,166,255,.08)}
+.row-focus{outline:1px solid rgba(88,166,255,.8);background:rgba(88,166,255,.12)!important}
+
+/* Sections */
+.dashboard{padding:16px;display:flex;flex-direction:column;gap:16px}
+.section{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.section-header{padding:12px 16px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none}
+.section-header:hover{background:rgba(88,166,255,.05)}
+.section-header .arrow{transition:transform .2s;color:var(--text-muted)}
+.section-header.collapsed .arrow{transform:rotate(-90deg)}
+.section-subtitle{font-size:12px;color:var(--text-muted);font-weight:400;margin-left:8px}
+.section-link{margin-left:auto;margin-right:10px;background:transparent;border:1px solid var(--border);color:var(--text-muted);border-radius:6px;padding:2px 8px;font-size:11px;cursor:pointer}
+.section-link:hover{color:var(--accent);border-color:var(--accent)}
+.section-body{padding:16px;border-top:1px solid var(--border)}
+.section-body.hidden{display:none}
+
+/* Charts */
+.chart-container{width:100%;min-height:300px}
+.chart-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.chart-row.three{grid-template-columns:1fr 1fr 1fr}
+
+/* Tables */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:6px 10px;text-align:left;border-bottom:1px solid var(--border)}
+th{color:var(--text-muted);font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.3px}
+tr:hover{background:rgba(88,166,255,.03)}
+.pnl-pos{color:var(--green)}.pnl-neg{color:var(--red)}
+
+/* Strategy badges */
+.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;text-transform:uppercase}
+.badge-aggressive{background:rgba(63,185,80,.15);color:var(--green)}
+.badge-conservative{background:rgba(139,148,158,.15);color:var(--text-muted)}
+.badge-spike_hunt{background:rgba(210,153,34,.15);color:var(--yellow)}
+.badge-latency_focus{background:rgba(88,166,255,.15);color:var(--blue)}
+
+/* Gauge */
+.gauge-wrap{display:flex;justify-content:center;align-items:center;flex-direction:column}
+
+/* Checklist */
+.checklist{list-style:none}
+.checklist li{padding:6px 0;display:flex;align-items:center;gap:8px;font-size:13px}
+.check-pass{color:var(--green)}.check-fail{color:var(--red)}
+
+/* Responsive */
+@media(max-width:900px){.health-banner{grid-template-columns:repeat(3,1fr)}.chart-row{grid-template-columns:1fr}}
+@media(max-width:900px){.action-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:600px){.health-banner{grid-template-columns:repeat(2,1fr)}.action-grid{grid-template-columns:1fr}}
+
+.empty-state{padding:40px;text-align:center;color:var(--text-muted)}
+.insight-text{font-size:13px;color:var(--text-muted);margin-top:12px;padding:10px 12px;background:rgba(88,166,255,.04);border-left:3px solid var(--border);border-radius:0 4px 4px 0}
+.precision-line{font-size:12px;color:var(--text-muted);margin-bottom:12px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;display:flex;gap:16px;flex-wrap:wrap}
+.precision-line span{white-space:nowrap}
+.scanner-eff-table{font-size:12px;overflow-y:auto;max-height:300px}
+.scanner-eff-table td,.scanner-eff-table th{padding:5px 8px}
+.verdict-profitable{color:var(--green)}.verdict-marginal{color:var(--yellow)}.verdict-losing{color:var(--red)}
+.action-hint{display:block;font-size:12px;color:var(--yellow);margin-top:2px;padding-left:28px}
+.badge-sim{background:rgba(88,166,255,.15);color:var(--blue);font-size:10px;padding:1px 6px;border-radius:8px;font-weight:600;text-transform:uppercase;vertical-align:middle}
+
+/* Trade breakdown deep dive */
+.tb-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;font-size:12px}
+.tb-grid.three{grid-template-columns:1fr 1.2fr 0.8fr}
+@media(max-width:900px){.tb-grid.three{grid-template-columns:1fr 1fr}}
+@media(max-width:700px){.tb-grid,.tb-grid.three{grid-template-columns:1fr}}
+.tb-verdict{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.tb-verdict .pnl-big{font-size:28px;font-weight:700;line-height:1}
+.tb-verdict-meta{display:flex;flex-direction:column;gap:2px}
+.tb-verdict-meta span{color:var(--text-muted)}
+.tb-label{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:4px}
+.tb-waterfall{display:flex;flex-direction:column;gap:3px}
+.tb-wf-row{display:flex;justify-content:space-between;align-items:center;padding:3px 8px;border-radius:4px}
+.tb-wf-row.gross{background:rgba(63,185,80,.08)}
+.tb-wf-row.cost{background:rgba(248,81,73,.06)}
+.tb-wf-row.net{background:rgba(88,166,255,.1);font-weight:600;border:1px solid rgba(88,166,255,.2)}
+.tb-legs{width:100%}
+.tb-legs th{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted);padding:3px 6px;border-bottom:1px solid var(--border)}
+.tb-legs td{padding:3px 6px;border-bottom:1px solid rgba(48,54,61,.5)}
+.tb-side-buy{color:var(--green);font-weight:600}
+.tb-side-sell{color:var(--red);font-weight:600}
+.tb-scores{display:flex;flex-direction:column;gap:3px;margin-top:6px}
+.tb-score-row{display:flex;align-items:center;gap:6px}
+.tb-score-label{width:80px;font-size:11px;color:var(--text-muted);text-align:right}
+.tb-score-bar{flex:1;height:8px;background:var(--bg);border-radius:4px;overflow:hidden}
+.tb-score-fill{height:100%;border-radius:4px}
+.tb-score-val{width:32px;font-size:11px;text-align:right}
+.tb-signals{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.tb-signal{padding:3px 8px;border-radius:999px;font-size:11px;font-weight:500}
+.tb-signal-good{background:rgba(63,185,80,.12);color:var(--green);border:1px solid rgba(63,185,80,.25)}
+.tb-signal-warn{background:rgba(210,153,34,.12);color:var(--yellow);border:1px solid rgba(210,153,34,.25)}
+.tb-signal-bad{background:rgba(248,81,73,.12);color:var(--red);border:1px solid rgba(248,81,73,.25)}
+.tb-signal-info{background:rgba(88,166,255,.1);color:var(--blue);border:1px solid rgba(88,166,255,.25)}
+</style>
+</head>
+<body>
+
+<!-- Session selector -->
+<div class="session-bar">
+  <label>Session:</label>
+  <select id="session-select"><option value="">Loading...</option></select>
+  <div class="status" id="live-status"></div>
+</div>
+
+<!-- Health banner (A) -->
+<div class="health-banner" id="health-banner">
+  <div class="kpi-card">
+    <div class="label">Go-Live Score <span class="tip" data-tip="Composite readiness score from six checks. Use this as a quick launch/no-launch gate.">?</span></div>
+    <div class="value" id="kpi-score">--</div>
+    <div class="sub" id="kpi-rec">--</div>
+  </div>
+  <div class="kpi-card">
+    <div class="label">Net P&L <span class="tip" data-tip="Total realized/simulated P&L for the selected session.">?</span></div>
+    <div class="value" id="kpi-pnl">--</div>
+    <div class="sub" id="kpi-trades">--</div>
+  </div>
+  <div class="kpi-card">
+    <div class="label">Win Rate <span class="tip" data-tip="Share of trades with positive net P&L.">?</span></div>
+    <div class="value" id="kpi-winrate">--</div>
+    <div class="sub" id="kpi-wl">--</div>
+  </div>
+  <div class="kpi-card">
+    <div class="label">Opps Found <span class="tip" data-tip="Opportunities detected by scanners before execution.">?</span></div>
+    <div class="value" id="kpi-opps">--</div>
+    <div class="sub" id="kpi-opps-sub">--</div>
+  </div>
+  <div class="kpi-card">
+    <div class="label">Cycles <span class="tip" data-tip="Total completed scan cycles in this session.">?</span></div>
+    <div class="value" id="kpi-cycles">--</div>
+    <div class="sub" id="kpi-uptime">--</div>
+  </div>
+  <div class="kpi-card">
+    <div class="label">Strategy <span class="tip" data-tip="Current adaptive strategy mode selected from market conditions.">?</span></div>
+    <div class="value" id="kpi-strategy">--</div>
+    <div class="sub" id="kpi-gas">--</div>
+  </div>
+</div>
+
+<!-- Action center -->
+<div class="action-center" id="action-center">
+  <div class="action-head">
+    <h2>Action Center <span class="section-subtitle">Prioritized next moves with deep dives</span></h2>
+    <div class="quick-links">
+      <button onclick="jumpToSection('funnel')">Funnel</button>
+      <button onclick="jumpToSection('opps')">Opportunities</button>
+      <button onclick="jumpToSection('risk')">Risk</button>
+      <button onclick="jumpToSection('readiness')">Readiness</button>
+      <button onclick="jumpToSection('untapped')">Untapped</button>
+    </div>
+  </div>
+  <div class="action-grid" id="action-grid">
+    <div class="action-card empty"><p>Load a session to get prioritized actions.</p></div>
+  </div>
+</div>
+
+<div class="dashboard">
+
+<!-- B: Pipeline Funnel -->
+<div class="section" id="sec-funnel">
+  <div class="section-header" onclick="toggleSection('funnel')"><h2>Pipeline Funnel <span class="tip" data-tip="Track where opportunities are filtered out. Biggest drop-off usually marks your best tuning lever.">?</span><span class="section-subtitle">How markets narrow from raw scan to execution</span></h2><span class="arrow">&#9660;</span></div>
+  <div class="section-body" id="body-funnel">
+    <div class="chart-row"><div class="chart-container" id="chart-funnel"></div><div class="chart-container" id="chart-safety-bars"></div></div>
+    <p id="funnel-insight" class="insight-text" style="display:none"></p>
+  </div>
+</div>
+
+<!-- C: Opportunity Landscape -->
+<div class="section" id="sec-opps">
+  <div class="section-header" onclick="toggleSection('opps')"><h2>Opportunity Landscape <span class="tip" data-tip="Bubble size and clustering reveal whether edge quality is broad or concentrated in a few events.">?</span><span class="section-subtitle">Every detected edge plotted by expected profit and ROI</span></h2><span class="arrow">&#9660;</span></div>
+  <div class="section-body" id="body-opps">
+    <div class="chart-row"><div class="chart-container" id="chart-scatter"></div><div class="chart-container" id="chart-treemap"></div></div>
+  </div>
+</div>
+
+<!-- D: Score Decomposition -->
+<div class="section" id="sec-scores">
+  <div class="section-header" onclick="toggleSection('scores')"><h2>Score Decomposition <span class="tip" data-tip="Use this to spot factor imbalances, for example high profit score but weak fill confidence.">?</span><span class="section-subtitle">Six weighted factors explain every score</span></h2><span class="arrow">&#9660;</span></div>
+  <div class="section-body" id="body-scores">
+    <div class="chart-container" id="chart-score-bars"></div>
+  </div>
+</div>
+
+<!-- E: Strategy Timeline -->
+<div class="section" id="sec-strategy">
+  <div class="section-header" onclick="toggleSection('strategy')"><h2>Strategy Timeline <span class="tip" data-tip="Correlate strategy mode changes with gas and opportunity quality shifts.">?</span><span class="section-subtitle">How the bot adapts to gas, spikes, and momentum</span></h2><span class="arrow">&#9660;</span></div>
+  <div class="section-body" id="body-strategy">
+    <div class="chart-container" id="chart-strategy"></div>
+  </div>
+</div>
+
+<!-- F: Cross-Platform Analysis -->
+<div class="section" id="sec-cross">
+  <div class="section-header" onclick="toggleSection('cross')"><h2>Cross-Platform Analysis <span class="tip" data-tip="Focus on large price differences with high confidence; low-confidence matches are exploratory only.">?</span><span class="section-subtitle">Price divergences between Polymarket and external exchanges</span></h2><span class="arrow">&#9660;</span></div>
+  <div class="section-body" id="body-cross">
+    <div class="chart-row"><div class="chart-container" id="chart-cross-scatter"></div><div class="chart-container" id="chart-cross-hist"></div></div>
+    <div id="cross-table-wrap" style="margin-top:16px;max-height:300px;overflow-y:auto"></div>
+  </div>
+</div>
+
+<!-- G: P&L & Trade History -->
+<div class="section" id="sec-pnl">
+  <div class="section-header" onclick="toggleSection('pnl')"><h2>P&L & Trade History <span class="tip" data-tip="Use execution precision and per-trade costs to validate whether modeled edges survive execution.">?</span><span class="section-subtitle">Every trade with full cost accounting</span></h2><span class="arrow">&#9660;</span></div>
+  <div class="section-body" id="body-pnl">
+    <div class="chart-container" id="chart-pnl"></div>
+    <div id="exec-precision" class="precision-line" style="display:none"></div>
+    <div id="trades-table-wrap" style="margin-top:16px;max-height:400px;overflow-y:auto"></div>
+  </div>
+</div>
+
+<!-- H: Scanner Distribution -->
+<div class="section" id="sec-scanners">
+  <div class="section-header" onclick="toggleSection('scanners')"><h2>Scanner Distribution <span class="tip" data-tip="High detection volume does not imply profitability. Compare scanner volume against net P&L.">?</span><span class="section-subtitle">Which scanners find opportunities and which ones make money</span></h2><span class="arrow">&#9660;</span></div>
+  <div class="section-body" id="body-scanners">
+    <div class="chart-row"><div class="chart-container" id="chart-scanners"></div><div id="scanner-efficiency-wrap" class="scanner-eff-table"></div></div>
+  </div>
+</div>
+
+<!-- I: Risk Dashboard -->
+<div class="section" id="sec-risk">
+  <div class="section-header" onclick="toggleSection('risk')"><h2>Risk Dashboard <span class="tip" data-tip="If one check dominates rejections, tune that check first before touching global thresholds.">?</span><span class="section-subtitle">Safety checks that prevented bad trades</span></h2><span class="arrow">&#9660;</span></div>
+  <div class="section-body" id="body-risk">
+    <div class="chart-row"><div class="chart-container" id="chart-safety-rates"></div><div class="chart-container" id="chart-gas"></div></div>
+  </div>
+</div>
+
+<!-- J: Go-Live Readiness -->
+<div class="section" id="sec-readiness">
+  <div class="section-header" onclick="toggleSection('readiness')"><h2>Go-Live Readiness <span class="tip" data-tip="Failing a high-weight check often matters more than passing several low-weight checks.">?</span><span class="section-subtitle">Six weighted checks determine live trading readiness</span></h2><span class="arrow">&#9660;</span></div>
+  <div class="section-body" id="body-readiness">
+    <div class="chart-row">
+      <div class="gauge-wrap"><div class="chart-container" id="chart-gauge"></div></div>
+      <div><ul class="checklist" id="readiness-checklist"></ul><p id="readiness-summary" style="margin-top:12px;color:var(--text-muted);font-size:13px"></p></div>
+    </div>
+  </div>
+</div>
+
+<!-- K: Untapped Opportunities -->
+<div class="section" id="sec-untapped">
+  <div class="section-header" onclick="toggleSection('untapped')"><h2>Untapped Opportunities <span class="tip" data-tip="Use this table to identify profitable trades blocked by overly strict checks or stale assumptions.">?</span><span class="section-subtitle">High-scoring edges rejected by safety checks</span></h2><span class="arrow">&#9660;</span></div>
+  <div class="section-body" id="body-untapped">
+    <p id="untapped-insight" style="margin-bottom:12px;color:var(--text-muted);font-size:13px"></p>
+    <div id="untapped-table-wrap" style="max-height:400px;overflow-y:auto"></div>
+  </div>
+</div>
+
+</div><!-- /dashboard -->
+
+<script>
+const API = '';
+let currentSession = null;
+let evtSource = null;
+const plotBg = '#0d1117';
+const plotPaper = '#161b22';
+const plotGrid = '#21262d';
+const plotText = '#8b949e';
+const plotLayout = {paper_bgcolor:plotPaper,plot_bgcolor:plotBg,font:{color:plotText,size:11},margin:{l:50,r:20,t:30,b:40},xaxis:{gridcolor:plotGrid},yaxis:{gridcolor:plotGrid}};
+const plotConfig = {responsive:true,displayModeBar:false};
+
+function toggleSection(name){
+  const h=document.querySelector(`#sec-${name} .section-header`);
+  const b=document.getElementById(`body-${name}`);
+  h.classList.toggle('collapsed');
+  b.classList.toggle('hidden');
+}
+
+function jumpToSection(name,focus='',updateUrl=true){
+  const sec=document.getElementById(`sec-${name}`);
+  if(!sec)return;
+  const h=sec.querySelector('.section-header');
+  const b=document.getElementById(`body-${name}`);
+  if(h&&b&&b.classList.contains('hidden')){
+    h.classList.remove('collapsed');
+    b.classList.remove('hidden');
+  }
+  sec.classList.add('section-flash');
+  setTimeout(()=>sec.classList.remove('section-flash'),900);
+  sec.scrollIntoView({behavior:'smooth',block:'start'});
+  if(updateUrl){
+    const u=new URL(window.location.href);
+    u.searchParams.set('section',name);
+    if(focus)u.searchParams.set('focus',focus);
+    else u.searchParams.delete('focus');
+    history.replaceState({},'',u);
+  }
+  if(focus){
+    setTimeout(()=>highlightFocus(name,focus),250);
+  }
+}
+
+function highlightFocus(section,focus){
+  const sec=document.getElementById(`sec-${section}`);
+  if(!sec||!focus)return;
+  const norm=focus.toLowerCase();
+  const rows=[...sec.querySelectorAll('tr')];
+  const target=rows.find(r=>r.textContent.toLowerCase().includes(norm));
+  if(!target)return;
+  target.classList.add('row-focus');
+  setTimeout(()=>target.classList.remove('row-focus'),1800);
+}
+
+function showDeepDive(title,pills){
+  const panel=document.getElementById('deep-dive-panel');
+  const t=document.getElementById('deep-dive-title');
+  const body=document.getElementById('deep-dive-body');
+  if(!panel||!t||!body)return;
+  t.textContent=title;
+  body.innerHTML=(pills||[]).map(p=>`<span class="deep-pill">${p}</span>`).join('');
+  panel.style.display='flex';
+}
+
+function clearDeepDive(){
+  const panel=document.getElementById('deep-dive-panel');
+  if(panel)panel.style.display='none';
+}
+
+function applyDeepLinkFromUrl(){
+  const params=new URLSearchParams(window.location.search);
+  const section=params.get('section');
+  const focus=params.get('focus')||'';
+  if(section){
+    jumpToSection(section,focus,false);
+  }
+}
+
+function syncSessionInUrl(sessionId){
+  const u=new URL(window.location.href);
+  if(sessionId)u.searchParams.set('session',String(sessionId));
+  else u.searchParams.delete('session');
+  history.replaceState({},'',u);
+}
+
+function flashStatus(text){
+  const status=document.getElementById('live-status');
+  if(!status)return;
+  status.textContent=text;
+  setTimeout(()=>{
+    if(evtSource&&evtSource.readyState===1){
+      status.innerHTML=`<span class="live-dot"></span> Live · updated ${new Date().toLocaleTimeString()}`;
+    }
+  },1800);
+}
+
+async function copyDeepLink(section){
+  const u=new URL(window.location.href);
+  u.searchParams.set('section',section);
+  if(currentSession)u.searchParams.set('session',String(currentSession));
+  try{
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(u.toString());
+      flashStatus(`Copied deep link for ${section}`);
+    }else{
+      flashStatus(`Deep link: ${u.toString()}`);
+    }
+  }catch(_err){
+    flashStatus(`Deep link: ${u.toString()}`);
+  }
+}
+
+function attachSectionLinks(){
+  const sections=document.querySelectorAll('.section');
+  sections.forEach(sec=>{
+    const sectionId=(sec.id||'').replace('sec-','');
+    if(!sectionId)return;
+    const header=sec.querySelector('.section-header');
+    const arrow=header?header.querySelector('.arrow'):null;
+    if(!header||!arrow||header.querySelector('.section-link'))return;
+    const btn=document.createElement('button');
+    btn.className='section-link';
+    btn.textContent='Deep link';
+    btn.title='Copy shareable link to this section';
+    btn.onclick=(ev)=>{
+      ev.stopPropagation();
+      copyDeepLink(sectionId);
+    };
+    header.insertBefore(btn,arrow);
+  });
+}
+
+// ── Data fetching ──
+async function api(path){
+  const r=await fetch(API+path);
+  if(!r.ok) return null;
+  return r.json();
+}
+
+async function loadSessions(){
+  const sessions=await api('/api/sessions');
+  const sel=document.getElementById('session-select');
+  if(!sessions||!sessions.length){sel.innerHTML='<option value="">No sessions</option>';return;}
+  sel.innerHTML=sessions.map(s=>{
+    const d=new Date(s.start_ts*1000).toLocaleString();
+    const pnl=s.total_pnl!==undefined&&s.total_pnl!==null?` | $${s.total_pnl.toFixed(2)}`:'';
+    const active=!s.end_ts;
+    const tag=active?'\u25CF LIVE':'\u2713 Done';
+    return `<option value="${s.id}">${tag} ${s.mode} — ${d} (${s.cycle_count||0} cycles${pnl})</option>`;
+  }).join('');
+  sel.onchange=()=>loadSession(parseInt(sel.value,10));
+  const params=new URLSearchParams(window.location.search);
+  const requestedId=parseInt(params.get('session')||'',10);
+  const hasRequested=sessions.some(s=>s.id===requestedId);
+  const startId=hasRequested?requestedId:sessions[0].id;
+  sel.value=String(startId);
+  loadSession(startId);
+}
+
+async function loadSession(id){
+  if(!id)return;
+  currentSession=id;
+  syncSessionInUrl(id);
+  // Load all data in parallel
+  const [session,cycles,funnel,opps,safety,strategy,crossPlatform,trades,pnl,scanners,readiness,untapped]=await Promise.all([
+    api(`/api/sessions/${id}`),
+    api(`/api/sessions/${id}/cycles`),
+    api(`/api/sessions/${id}/funnel`),
+    api(`/api/sessions/${id}/opportunities?limit=200`),
+    api(`/api/sessions/${id}/safety`),
+    api(`/api/sessions/${id}/strategy`),
+    api(`/api/sessions/${id}/cross-platform`),
+    api(`/api/sessions/${id}/trades`),
+    api(`/api/sessions/${id}/pnl`),
+    api(`/api/sessions/${id}/scanners`),
+    api(`/api/sessions/${id}/readiness`),
+    api(`/api/sessions/${id}/untapped`),
+  ]);
+  renderActionCenter(session,cycles,safety,readiness,untapped,trades);
+  renderHealthBanner(session,cycles,readiness,strategy);
+  renderFunnel(funnel,safety);
+  renderOpportunityLandscape(opps);
+  renderScoreDecomposition(opps);
+  renderStrategyTimeline(strategy);
+  renderCrossPlatform(crossPlatform);
+  renderPnL(pnl,trades,opps,crossPlatform);
+  renderScanners(scanners,trades);
+  renderRisk(safety,cycles);
+  renderReadiness(readiness);
+  renderUntapped(untapped,safety,session);
+  applyDeepLinkFromUrl();
+}
+
+// ── Health Banner ──
+function renderActionCenter(session,cycles,safety,readiness,untapped,trades){
+  const grid=document.getElementById('action-grid');
+  if(!grid)return;
+
+  const actions=[];
+  const actionHints={
+    win_rate:{section:'scores',title:'Raise signal quality',hint:'Tighten minimum edge/ROI thresholds and compare score decomposition for losing setups.'},
+    safety_pass_rate:{section:'risk',title:'Reduce false safety blocks',hint:'Review top rejection checks and relax only the one that dominates false positives.'},
+    circuit_breaker:{section:'pnl',title:'Break loss streaks earlier',hint:'Lower per-trade size or disable low-conviction scanners until drawdown stabilizes.'},
+    pnl_trend:{section:'scanners',title:'Stop leaking P&L',hint:'Disable losing scanner types and re-run in paper mode before live capital.'},
+    execution_speed:{section:'pnl',title:'Improve execution path',hint:'Measure latency hotspots and trim route complexity before enabling live mode.'},
+    opportunity_consistency:{section:'funnel',title:'Increase opportunity throughput',hint:'Broaden market filters slightly or add scanner coverage for thin sessions.'}
+  };
+
+  if(readiness&&readiness.checks){
+    const failing=readiness.checks.filter(c=>!c.passed).sort((a,b)=>b.weight-a.weight);
+    if(failing.length){
+      const top=failing[0];
+      const hint=actionHints[top.name]||{section:'readiness',title:'Improve readiness',hint:'Review failing readiness checks and close highest-weight gap first.'};
+      actions.push({
+        priority:1,
+        title:hint.title,
+        detail:top.detail,
+        impact:`Highest readiness drag: ${top.name.replace(/_/g,' ')}`,
+        section:hint.section,
+        cta:hint.hint,
+      });
+    }
+  }
+
+  if(untapped&&untapped.length){
+    const totalLeft=untapped.reduce((s,u)=>s+(u.net_profit||0),0);
+    const blockers={};
+    untapped.forEach(u=>{blockers[u.check_name]=(blockers[u.check_name]||0)+1;});
+    const top=Object.entries(blockers).sort((a,b)=>b[1]-a[1])[0];
+    if(top){
+      const pct=((top[1]/untapped.length)*100).toFixed(0);
+      actions.push({
+        priority:2,
+        title:'Unlock blocked profit',
+        detail:`$${totalLeft.toFixed(2)} potential rejected; ${top[0]} blocks ${pct}% of untapped trades.`,
+        impact:'Tune one blocker before changing global thresholds.',
+        section:'untapped',
+        cta:'Open Untapped Opportunities and inspect the highest-profit rejected setups first.',
+      });
+    }
+  }
+
+  if(safety&&safety.length){
+    const counts={};
+    safety.forEach(s=>{counts[s.check_name]=(counts[s.check_name]||0)+1;});
+    const top=Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];
+    if(top){
+      const pct=((top[1]/safety.length)*100).toFixed(0);
+      actions.push({
+        priority:3,
+        title:'Focus one risk control',
+        detail:`${top[0]} caused ${top[1]} of ${safety.length} rejections (${pct}%).`,
+        impact:'Single-check tuning usually gives fastest conversion lift.',
+        section:'risk',
+        cta:'Use Risk Dashboard bars to confirm whether this is a true protection or a false reject pattern.',
+      });
+    }
+  }
+
+  if(cycles&&cycles.length>=3){
+    const recent=[...cycles].sort((a,b)=>a.cycle_num-b.cycle_num).slice(-5);
+    const recentOpps=recent.reduce((s,c)=>s+(c.opps_found||0),0);
+    if(recentOpps===0){
+      actions.push({
+        priority:4,
+        title:'Recover empty cycles',
+        detail:`Last ${recent.length} cycles found zero opportunities.`,
+        impact:'Likely input throttling/filter saturation; widen feasible universe.',
+        section:'funnel',
+        cta:'Inspect funnel drop-off and scanner distribution for starvation.',
+      });
+    }
+  }
+
+  if(session&&(session.trade_count||0)===0&&(session.cycle_count||0)>=5){
+    actions.push({
+      priority:5,
+      title:'Validate fills before live',
+      detail:`${session.cycle_count} cycles with no real executions.`,
+      impact:'Readiness can overstate confidence without execution latency/fill data.',
+      section:'pnl',
+      cta:'Run paper mode briefly and compare execution precision metrics against simulated assumptions.',
+    });
+  }
+
+  if(!actions.length){
+    grid.innerHTML='<div class="action-card empty"><p>No urgent actions detected. Continue monitoring readiness and funnel conversion.</p></div>';
+    return;
+  }
+
+  const topActions=actions.sort((a,b)=>a.priority-b.priority).slice(0,3);
+  grid.innerHTML=topActions.map((a,idx)=>`
+    <div class="action-card">
+      <div class="priority">Priority ${idx+1}</div>
+      <h3>${a.title}</h3>
+      <p>${a.detail}</p>
+      <div class="impact">${a.impact}</div>
+      <p>${a.cta}</p>
+      <button class="deep-link" onclick="jumpToSection('${a.section}')">Deep dive: ${a.section.replace('_',' ')}</button>
+    </div>
+  `).join('');
+}
+
+function renderHealthBanner(session,cycles,readiness,strategy){
+  if(!session)return;
+  // Score
+  const score=readiness?readiness.score:0;
+  const el=id=>document.getElementById(id);
+  el('kpi-score').textContent=readiness?Math.round(score):'--';
+  el('kpi-score').className='value '+(score>=70?'value-green':score>=40?'value-yellow':'value-red');
+  el('kpi-rec').textContent=readiness?readiness.recommendation:'--';
+
+  // P&L
+  const pnl=session.total_pnl||0;
+  const tradeCount=session.trade_count||0;
+  el('kpi-pnl').textContent='$'+pnl.toFixed(2);
+  el('kpi-pnl').className='value '+(pnl>=0?'value-green':'value-red');
+  const avgTrade=tradeCount>0?'$'+(pnl/tradeCount).toFixed(2)+'/trade':'';
+  el('kpi-trades').textContent=tradeCount+' trades'+(avgTrade?' (avg '+avgTrade+')':'');
+
+  // Win rate (from readiness checks)
+  const wrCheck=readiness?readiness.checks.find(c=>c.name==='win_rate'):null;
+  if(wrCheck){
+    const match=(wrCheck.detail||'').match(/(\d+(?:\.\d+)?)%/);
+    if(match){
+      const rateNum=parseFloat(match[1]);
+      const rateStr=`${rateNum.toFixed(rateNum%1===0?0:1)}%`;
+      el('kpi-winrate').textContent=rateStr;
+      el('kpi-winrate').className='value '+(rateNum>=60?'value-green':'value-red');
+      el('kpi-wl').textContent=rateNum>=60?rateStr+' — above 60% threshold':rateStr+' — below 60% target';
+    }else{
+      el('kpi-winrate').textContent='N/A';
+      el('kpi-winrate').className='value value-yellow';
+      el('kpi-wl').textContent='No trade data yet';
+    }
+  } else {
+    el('kpi-winrate').textContent='--';
+    el('kpi-wl').textContent='--';
+  }
+
+  // Opps
+  const totalOpps=cycles?cycles.reduce((s,c)=>s+c.opps_found,0):0;
+  const nCycles=cycles?cycles.length:0;
+  const avgOpps=nCycles>0?(totalOpps/nCycles).toFixed(1):'0';
+  el('kpi-opps').textContent=totalOpps.toLocaleString();
+  // Trend arrow: compare last 5 vs previous 5
+  let trendArrow='';
+  if(cycles&&nCycles>=10){
+    const sorted=[...cycles].sort((a,b)=>a.cycle_num-b.cycle_num);
+    const recent5=sorted.slice(-5).reduce((s,c)=>s+c.opps_found,0)/5;
+    const prev5=sorted.slice(-10,-5).reduce((s,c)=>s+c.opps_found,0)/5;
+    trendArrow=recent5>=prev5?' \u2191':' \u2193';
+  }
+  el('kpi-opps-sub').textContent=totalOpps.toLocaleString()+' \u00B7 '+avgOpps+'/cycle avg'+trendArrow;
+
+  // Cycles
+  const cycleCount=session.cycle_count||0;
+  el('kpi-cycles').textContent=cycleCount;
+  if(session.start_ts){
+    const dur=((session.end_ts||Date.now()/1000)-session.start_ts);
+    const totalScanned=cycles?cycles.reduce((s,c)=>s+(c.markets_scanned||0),0):0;
+    const scannedStr=totalScanned>0?' | '+totalScanned.toLocaleString()+' markets scanned':'';
+    el('kpi-uptime').textContent=formatDuration(dur)+scannedStr;
+  }
+
+  // Strategy
+  const latest=strategy&&strategy.length?strategy[strategy.length-1]:null;
+  if(latest){
+    el('kpi-strategy').innerHTML=`<span class="badge badge-${latest.mode}">${latest.mode}</span>`;
+    el('kpi-gas').textContent=`Gas: ${latest.gas_price_gwei.toFixed(0)} gwei`;
+  }
+}
+
+function formatDuration(sec){
+  if(sec<60)return sec.toFixed(0)+'s';
+  const m=Math.floor(sec/60),s=Math.floor(sec%60);
+  if(m<60)return m+'m '+s+'s';
+  const h=Math.floor(m/60),rm=m%60;
+  return h+'h '+rm+'m';
+}
+
+// ── Funnel ──
+function renderFunnel(funnel,safety){
+  const insightEl=document.getElementById('funnel-insight');
+  if(!funnel||!funnel.length){Plotly.purge('chart-funnel');if(insightEl)insightEl.style.display='none';return;}
+  // Order stages
+  const order=['raw_markets','after_filter','opps_found','opps_scored','executed'];
+  const labels=['Raw Markets','After Filter','Opps Found','Opps Scored','Executed'];
+  const vals=order.map(s=>{const f=funnel.find(x=>x.stage===s);return f?(f.count||f.avg_count||0):0;});
+  Plotly.react('chart-funnel',[{type:'funnel',y:labels,x:vals,textinfo:'value+percent previous',marker:{color:['#58a6ff','#58a6ff','#3fb950','#3fb950','#f85149']}}],{...plotLayout,title:'Pipeline Funnel'},plotConfig);
+
+  // Compute funnel insight
+  if(insightEl&&vals[0]>0){
+    const overall=vals[4]>0?((vals[4]/vals[0])*100).toFixed(3)+'%':'0%';
+    const drops=[];
+    const dropExplain={
+      0:'Volume and time filters remove inactive markets',
+      1:'Scanner detection narrowing',
+      2:'Scoring eliminates low-quality edges',
+      3:'Safety checks filter risky trades'
+    };
+    let biggestDrop=0,biggestIdx=0;
+    for(let i=0;i<vals.length-1;i++){
+      if(vals[i]>0){
+        const dropPct=((1-vals[i+1]/vals[i])*100);
+        drops.push(`${labels[i]} \u2192 ${labels[i+1]}: ${dropPct.toFixed(0)}% drop`);
+        if(dropPct>biggestDrop){biggestDrop=dropPct;biggestIdx=i;}
+      }
+    }
+    let insight=`Overall conversion: ${vals[0].toLocaleString()} \u2192 ${vals[4].toLocaleString()} (${overall}). `;
+    insight+=`Biggest drop: ${labels[biggestIdx]} \u2192 ${labels[biggestIdx+1]} (${biggestDrop.toFixed(0)}%). `;
+    insight+=dropExplain[biggestIdx]||'';
+    insightEl.textContent=insight;
+    insightEl.style.display='block';
+  } else if(insightEl){
+    insightEl.style.display='none';
+  }
+
+  // Safety rejection bars
+  if(safety&&safety.length){
+    const counts={};
+    safety.forEach(s=>{counts[s.check_name]=(counts[s.check_name]||0)+1;});
+    const names=Object.keys(counts).sort((a,b)=>counts[b]-counts[a]);
+    const totalChecked=safety.length;
+    // Compute pass rate if we have scored opps data
+    const safetyTitle=`Safety Rejections (${totalChecked} blocked)`;
+    Plotly.react('chart-safety-bars',[{type:'bar',x:names,y:names.map(n=>counts[n]),marker:{color:'#f85149'}}],{...plotLayout,title:safetyTitle},plotConfig);
+  }
+}
+
+// ── Opportunity Landscape ──
+function renderOpportunityLandscape(opps){
+  if(!opps||!opps.length){Plotly.purge('chart-scatter');Plotly.purge('chart-treemap');return;}
+  // Scatter: ROI vs Profit
+  const types=[...new Set(opps.map(o=>o.opp_type))];
+  const colors=['#58a6ff','#3fb950','#d29922','#f85149','#bc8cff','#f778ba','#79c0ff','#56d364','#e3b341'];
+  const traces=types.map((t,i)=>{
+    const filtered=opps.filter(o=>o.opp_type===t);
+    return{
+      type:'scatter',mode:'markers',name:t.replace(/_/g,' '),
+      x:filtered.map(o=>o.roi_pct),y:filtered.map(o=>o.net_profit),
+      marker:{size:filtered.map(o=>Math.max(8,o.total_score*30)),color:colors[i%colors.length],opacity:0.7},
+      text:filtered.map(o=>`${o.event_id.slice(0,10)}... Score:${o.total_score.toFixed(2)}`),
+      hovertemplate:'ROI: %{x:.1f}%<br>Profit: $%{y:.2f}<br>%{text}<extra></extra>'
+    };
+  });
+  Plotly.react('chart-scatter',traces,{...plotLayout,title:'Opportunities: ROI vs Profit',xaxis:{...plotLayout.xaxis,title:'ROI %'},yaxis:{...plotLayout.yaxis,title:'Net Profit ($)'}},plotConfig);
+
+  // Treemap: by type → event
+  const tLabels=['All'],tParents=[''],tValues=[0],tColors=[''];
+  types.forEach((t,i)=>{
+    const typeOpps=opps.filter(o=>o.opp_type===t);
+    const typeProfit=typeOpps.reduce((s,o)=>s+Math.max(0,o.net_profit),0);
+    tLabels.push(t.replace(/_/g,' '));tParents.push('All');tValues.push(typeProfit);tColors.push(colors[i%colors.length]);
+    typeOpps.forEach(o=>{
+      tLabels.push(o.event_id.slice(0,12));tParents.push(t.replace(/_/g,' '));tValues.push(Math.max(0.01,o.net_profit));tColors.push(colors[i%colors.length]);
+    });
+  });
+  Plotly.react('chart-treemap',[{type:'treemap',labels:tLabels,parents:tParents,values:tValues,marker:{colors:tColors},textinfo:'label+value',hovertemplate:'%{label}<br>$%{value:.2f}<extra></extra>'}],{...plotLayout,title:'Edge Concentration (by profit)'},plotConfig);
+}
+
+// ── Score Decomposition ──
+function renderScoreDecomposition(opps){
+  if(!opps||!opps.length){Plotly.purge('chart-score-bars');return;}
+  const top=opps.slice(0,20);
+  const factors=['profit_score','fill_score','efficiency_score','urgency_score','competition_score','persistence_score'];
+  const weights=[0.22,0.22,0.17,0.17,0.07,0.15];
+  const fColors=['#58a6ff','#3fb950','#d29922','#f85149','#bc8cff','#79c0ff'];
+  const traces=factors.map((f,i)=>({
+    type:'bar',name:f.replace('_score',''),
+    x:top.map(o=>o.event_id.slice(0,10)),
+    y:top.map(o=>(o[f]||0)*weights[i]),
+    marker:{color:fColors[i]}
+  }));
+  Plotly.react('chart-score-bars',traces,{...plotLayout,barmode:'stack',title:'Score Breakdown (top 20)',xaxis:{...plotLayout.xaxis,tickangle:-45},yaxis:{...plotLayout.yaxis,title:'Weighted Score'}},plotConfig);
+}
+
+// ── Strategy Timeline ──
+function renderStrategyTimeline(strategy){
+  if(!strategy||!strategy.length){Plotly.purge('chart-strategy');return;}
+  const modeColors={aggressive:'#3fb950',conservative:'#8b949e',spike_hunt:'#d29922',latency_focus:'#58a6ff'};
+  const times=strategy.map(s=>new Date(s.timestamp*1000));
+  // Gas line
+  const gasTrace={type:'scatter',mode:'lines',name:'Gas (gwei)',x:times,y:strategy.map(s=>s.gas_price_gwei),line:{color:'#f85149',width:1,dash:'dot'},yaxis:'y2'};
+  // Mode colored markers
+  const modeTrace={type:'scatter',mode:'markers+text',name:'Strategy',x:times,y:strategy.map(()=>0.5),
+    marker:{size:14,color:strategy.map(s=>modeColors[s.mode]||'#8b949e'),symbol:'square'},
+    text:strategy.map(s=>s.mode.slice(0,3).toUpperCase()),textposition:'top center',textfont:{size:9,color:plotText}};
+  Plotly.react('chart-strategy',[modeTrace,gasTrace],{...plotLayout,title:'Strategy Mode Over Time',
+    yaxis:{...plotLayout.yaxis,visible:false,range:[0,1]},
+    yaxis2:{title:'Gas (gwei)',overlaying:'y',side:'right',gridcolor:plotGrid,color:plotText},
+    showlegend:true,legend:{x:0,y:1.1,orientation:'h'}},plotConfig);
+}
+
+// ── Cross-Platform ──
+function renderCrossPlatform(matches){
+  if(!matches||!matches.length){
+    Plotly.purge('chart-cross-scatter');Plotly.purge('chart-cross-hist');
+    document.getElementById('cross-table-wrap').innerHTML='<div class="empty-state">No price divergences found — prices are currently aligned across platforms</div>';
+    return;
+  }
+  // Scatter: PM ask vs external ask
+  Plotly.react('chart-cross-scatter',[{
+    type:'scatter',mode:'markers',
+    x:matches.map(m=>m.pm_best_ask),y:matches.map(m=>m.ext_best_ask),
+    marker:{size:matches.map(m=>Math.max(6,Math.abs(m.price_diff)*200)),color:matches.map(m=>m.confidence),colorscale:'Viridis',showscale:true,colorbar:{title:'Conf'}},
+    text:matches.map(m=>`${m.platform}: ${m.ext_event_ticker.slice(0,20)}`),
+    hovertemplate:'PM: %{x:.3f}<br>Ext: %{y:.3f}<br>%{text}<extra></extra>'
+  },{type:'scatter',mode:'lines',x:[0,1],y:[0,1],line:{color:'#30363d',dash:'dash'},showlegend:false}],
+  {...plotLayout,title:'PM vs External Best Ask',xaxis:{...plotLayout.xaxis,title:'PM Best Ask'},yaxis:{...plotLayout.yaxis,title:'External Best Ask'}},plotConfig);
+
+  // Histogram: confidence
+  Plotly.react('chart-cross-hist',[{type:'histogram',x:matches.map(m=>m.confidence),nbinsx:20,marker:{color:'#58a6ff'}}],
+  {...plotLayout,title:'Match Confidence Distribution',xaxis:{...plotLayout.xaxis,title:'Confidence'}},plotConfig);
+
+  // Table
+  let html='<table><thead><tr><th>Platform</th><th>PM Event</th><th>Ext Ticker</th><th>PM Ask</th><th>Ext Ask</th><th>Diff</th><th>Confidence</th><th>Method</th></tr></thead><tbody>';
+  matches.forEach(m=>{
+    html+=`<tr><td>${m.platform}</td><td>${m.pm_event_id.slice(0,12)}</td><td>${m.ext_event_ticker.slice(0,20)}</td><td>$${m.pm_best_ask.toFixed(3)}</td><td>$${m.ext_best_ask.toFixed(3)}</td><td class="${m.price_diff>0?'pnl-pos':'pnl-neg'}">${m.price_diff.toFixed(3)}</td><td>${(m.confidence*100).toFixed(0)}%</td><td>${m.match_method}</td></tr>`;
+  });
+  html+='</tbody></table>';
+  document.getElementById('cross-table-wrap').innerHTML=html;
+  const rows=document.querySelectorAll('#cross-table-wrap tbody tr');
+  rows.forEach((row,idx)=>{
+    row.classList.add('clickable-row');
+    row.title='Click for quick deep dive';
+    row.onclick=()=>{
+      const m=matches[idx];
+      showDeepDive('Cross-Platform Mismatch',[
+        `Platform: ${m.platform}`,
+        `Diff: ${m.price_diff.toFixed(3)}`,
+        `Confidence: ${(m.confidence*100).toFixed(0)}%`,
+        `Method: ${m.match_method}`,
+        `PM ask ${m.pm_best_ask.toFixed(3)} vs Ext ask ${m.ext_best_ask.toFixed(3)}`,
+      ]);
+      row.classList.add('row-focus');
+      setTimeout(()=>row.classList.remove('row-focus'),1800);
+    };
+  });
+}
+
+// ── Trade deep dive builder ──
+function showTradeBreakdown(t,matchedOpp,xplatMatch){
+  const panel=document.getElementById('deep-dive-panel');
+  const titleEl=document.getElementById('deep-dive-title');
+  const body=document.getElementById('deep-dive-body');
+  if(!panel||!titleEl||!body)return;
+
+  const prices=JSON.parse(t.fill_prices_json||'[]');
+  const sizes=JSON.parse(t.fill_sizes_json||'[]');
+  const legs=matchedOpp?JSON.parse(matchedOpp.legs_json||'[]'):[];
+  const totalCost=t.fees+t.gas_cost;
+  const gross=t.net_pnl+totalCost;
+  const costPct=gross!==0?((totalCost/Math.abs(gross))*100).toFixed(0):'--';
+
+  // Detect cross-platform from leg data
+  const legPlatforms=[...new Set(legs.map(l=>(l.platform||'polymarket').toLowerCase()))];
+  const isCrossPlatform=legPlatforms.length>1||t.opp_type==='cross_platform_arb';
+
+  // Event title from opportunity data
+  const eventTitle=matchedOpp&&matchedOpp.event_title?matchedOpp.event_title:'';
+
+  // Execution speed assessment
+  let execVerdict,execCls;
+  if(t.simulated){execVerdict='Simulated';execCls='tb-signal-info';}
+  else if(t.execution_time_ms<500){execVerdict='Fast (<500ms)';execCls='tb-signal-good';}
+  else if(t.execution_time_ms<2000){execVerdict='Normal';execCls='tb-signal-info';}
+  else{execVerdict='Slow (>2s)';execCls='tb-signal-warn';}
+
+  // Score tier
+  let scoreTier,scoreCls;
+  if(t.total_score>=0.7){scoreTier='Strong';scoreCls='tb-signal-good';}
+  else if(t.total_score>=0.4){scoreTier='Moderate';scoreCls='tb-signal-warn';}
+  else{scoreTier='Weak';scoreCls='tb-signal-bad';}
+
+  // P&L verdict
+  const pnlCls=t.net_pnl>=0?'value-green':'value-red';
+  const pnlSign=t.net_pnl>=0?'+':'';
+  const pnlVerdict=t.net_pnl>0.10?'Solid win':t.net_pnl>0?'Marginal win':t.net_pnl>-0.05?'Near break-even':'Loss';
+
+  // Arb type description
+  const arbTypeMap={
+    binary_rebalance:'Binary YES+NO < $1 — buy both sides, guaranteed $1 payout',
+    negrisk_rebalance:'NegRisk sum of YES asks < $1 across outcomes',
+    cross_platform_arb:'Same event priced differently on two exchanges',
+    latency_arb:'Crypto price lagging spot by 15+ min',
+    spike_lag:'News-driven price dislocation in sibling markets',
+    stale_quote_arb:'Stale orderbook quote not yet updated',
+    maker_rebalance:'Maker-side rebalance on wide spread',
+    resolution_snipe:'Near-resolution mispricing',
+  };
+  const arbExplain=arbTypeMap[t.opp_type]||t.opp_type.replace(/_/g,' ');
+
+  // Readable title
+  const displayTitle=eventTitle||`Event ${t.event_id.slice(0,16)}`;
+  titleEl.textContent=displayTitle;
+
+  // ── Left column: what is this bet + verdict + waterfall ──
+  let left=`
+    <div style="margin-bottom:6px">
+      <div class="tb-label">What is this bet?</div>
+      <div style="font-size:13px;color:var(--text);line-height:1.4;margin-bottom:4px">${displayTitle}</div>
+      <div style="font-size:12px;color:var(--text-muted)">${arbExplain}</div>
+    </div>
+    <div class="tb-verdict">
+      <div class="pnl-big ${pnlCls}">${pnlSign}$${t.net_pnl.toFixed(2)}</div>
+      <div class="tb-verdict-meta">
+        <span style="font-size:13px;color:var(--text)">${pnlVerdict}</span>
+        <span>${new Date(t.timestamp*1000).toLocaleString()}</span>
+      </div>
+    </div>
+    <div class="tb-signals" style="margin-bottom:6px">
+      ${isCrossPlatform?`<span class="tb-signal tb-signal-warn">Cross-platform: ${legPlatforms.join(' + ')}</span>`:`<span class="tb-signal tb-signal-info">Single platform: Polymarket</span>`}
+      <span class="tb-signal ${t.simulated?'tb-signal-info':t.fully_filled?'tb-signal-good':'tb-signal-warn'}">${t.simulated?'Simulated':t.fully_filled?'Full fill':'Partial fill'}</span>
+      <span class="tb-signal ${execCls}">${execVerdict}${t.simulated?'':' \u00B7 '+t.execution_time_ms.toFixed(0)+'ms'}</span>
+      <span class="tb-signal ${scoreCls}">Score ${t.total_score.toFixed(2)} (${scoreTier})</span>
+      ${matchedOpp&&matchedOpp.is_buy_arb?'<span class="tb-signal tb-signal-good">BUY arb (no inventory needed)</span>':''}
+      ${matchedOpp&&!matchedOpp.is_buy_arb?'<span class="tb-signal tb-signal-warn">SELL arb (requires inventory)</span>':''}
+    </div>
+    <div class="tb-label">Cost Waterfall</div>
+    <div class="tb-waterfall">
+      <div class="tb-wf-row gross"><span>Gross edge</span><span>$${gross.toFixed(3)}</span></div>
+      <div class="tb-wf-row cost"><span>Taker fees</span><span>-$${t.fees.toFixed(3)}</span></div>
+      <div class="tb-wf-row cost"><span>Gas cost</span><span>-$${t.gas_cost.toFixed(3)}</span></div>
+      <div class="tb-wf-row net"><span>Net P&L</span><span class="${pnlCls}">${pnlSign}$${t.net_pnl.toFixed(2)}</span></div>
+      ${costPct!=='--'?`<div style="font-size:11px;color:var(--text-muted);text-align:right;margin-top:2px">Friction consumed ${costPct}% of gross edge</div>`:''}
+    </div>`;
+
+  // ── Middle column: legs with full detail ──
+  let mid='';
+  if(legs.length>0){
+    mid+=`<div class="tb-label">Leg-by-leg Breakdown</div><table class="tb-legs"><thead><tr><th>#</th><th>Side</th><th>Platform</th><th>Price</th><th>Impl. Prob</th><th>Size</th><th>Notional</th><th>Token</th></tr></thead><tbody>`;
+    legs.forEach((leg,i)=>{
+      const fillP=prices[i]!=null?prices[i]:leg.price;
+      const fillS=sizes[i]!=null?sizes[i]:leg.size;
+      const notional=(fillP*fillS).toFixed(2);
+      const impliedProb=(fillP*100).toFixed(1);
+      const platform=(leg.platform||'polymarket').replace('polymarket','PM').replace('kalshi','Kalshi');
+      const sideCls=leg.side==='BUY'?'tb-side-buy':'tb-side-sell';
+      const tokenShort=leg.token_id?(leg.token_id.length>12?leg.token_id.slice(0,6)+'\u2026'+leg.token_id.slice(-4):leg.token_id):'--';
+      mid+=`<tr>
+        <td>${i+1}</td>
+        <td class="${sideCls}">${leg.side}</td>
+        <td>${platform}</td>
+        <td>$${fillP.toFixed(3)}</td>
+        <td>${impliedProb}%</td>
+        <td>${fillS.toFixed(1)}</td>
+        <td>$${notional}</td>
+        <td style="font-size:10px;font-family:monospace;color:var(--text-muted)" title="${leg.token_id||''}">${tokenShort}</td>
+      </tr>`;
+    });
+    const totalNotional=legs.reduce((s,leg,i)=>{
+      const p=prices[i]!=null?prices[i]:leg.price;
+      const sz=sizes[i]!=null?sizes[i]:leg.size;
+      return s+p*sz;
+    },0);
+    mid+=`</tbody><tfoot><tr><td colspan="6" style="text-align:right;color:var(--text-muted)">Total notional</td><td>$${totalNotional.toFixed(2)}</td><td></td></tr></tfoot></table>`;
+
+    // Arb mechanics explanation
+    if(t.opp_type==='binary_rebalance'&&legs.length===2){
+      const sumPrices=legs.reduce((s,l)=>s+(prices[legs.indexOf(l)]!=null?prices[legs.indexOf(l)]:l.price),0);
+      mid+=`<div style="font-size:11px;color:var(--text-muted);margin-top:4px">YES ($${(prices[0]||legs[0].price).toFixed(3)}) + NO ($${(prices[1]||legs[1].price).toFixed(3)}) = $${sumPrices.toFixed(3)} &lt; $1.00 payout \u2192 $${(1-sumPrices).toFixed(3)} gross/set</div>`;
+    }
+    if(isCrossPlatform&&legs.length>=2){
+      const pmLeg=legs.find(l=>!l.platform||l.platform==='polymarket');
+      const extLeg=legs.find(l=>l.platform&&l.platform!=='polymarket');
+      if(pmLeg&&extLeg){
+        const extPlatform=(extLeg.platform||'external').replace('kalshi','Kalshi');
+        mid+=`<div style="font-size:11px;color:var(--text-muted);margin-top:4px">PM price $${pmLeg.price.toFixed(3)} vs ${extPlatform} price $${extLeg.price.toFixed(3)} \u2192 $${Math.abs(pmLeg.price-extLeg.price).toFixed(3)} spread</div>`;
+      }
+    }
+  } else if(prices.length>0) {
+    // Fallback: no legs_json but have fill data
+    mid+=`<div class="tb-label">Fill Data</div><table class="tb-legs"><thead><tr><th>#</th><th>Fill Price</th><th>Fill Size</th><th>Notional</th></tr></thead><tbody>`;
+    prices.forEach((p,i)=>{
+      const sz=sizes[i]||0;
+      mid+=`<tr><td>${i+1}</td><td>$${p.toFixed(3)}</td><td>${sz.toFixed(1)}</td><td>$${(p*sz).toFixed(2)}</td></tr>`;
+    });
+    mid+=`</tbody></table>`;
+  }
+
+  // Cross-platform match context
+  if(xplatMatch){
+    mid+=`<div class="tb-label" style="margin-top:8px">Cross-Platform Match</div>
+      <div style="font-size:12px;line-height:1.6">
+        <div><span style="color:var(--text-muted)">External:</span> <span style="color:var(--text)">${xplatMatch.platform} \u2014 ${xplatMatch.ext_event_ticker}</span></div>
+        <div><span style="color:var(--text-muted)">PM best ask:</span> $${xplatMatch.pm_best_ask.toFixed(3)} <span style="color:var(--text-muted)">\u2014 Ext best ask:</span> $${xplatMatch.ext_best_ask.toFixed(3)}</div>
+        <div><span style="color:var(--text-muted)">Price diff:</span> <span class="${xplatMatch.price_diff>0?'pnl-pos':'pnl-neg'}">$${xplatMatch.price_diff.toFixed(3)}</span></div>
+        <div><span style="color:var(--text-muted)">Match confidence:</span> ${(xplatMatch.confidence*100).toFixed(0)}% <span style="color:var(--text-muted)">via</span> ${xplatMatch.match_method}</div>
+      </div>`;
+  }
+
+  // ── Right column: score breakdown + context ──
+  let right='';
+  if(matchedOpp){
+    const factors=[
+      {key:'profit_score',label:'Profit',color:'#58a6ff'},
+      {key:'fill_score',label:'Fill',color:'#3fb950'},
+      {key:'efficiency_score',label:'Efficiency',color:'#d29922'},
+      {key:'urgency_score',label:'Urgency',color:'#f85149'},
+      {key:'competition_score',label:'Compet.',color:'#bc8cff'},
+      {key:'persistence_score',label:'Persist.',color:'#79c0ff'},
+    ];
+    right+=`<div class="tb-label">Score Breakdown</div><div class="tb-scores">`;
+    factors.forEach(f=>{
+      const v=matchedOpp[f.key]||0;
+      const pct=Math.min(100,v*100);
+      right+=`<div class="tb-score-row">
+        <span class="tb-score-label">${f.label}</span>
+        <div class="tb-score-bar"><div class="tb-score-fill" style="width:${pct}%;background:${f.color}"></div></div>
+        <span class="tb-score-val">${v.toFixed(2)}</span>
+      </div>`;
+    });
+    right+=`</div>`;
+
+    // Key metrics
+    right+=`<div class="tb-label" style="margin-top:8px">Opportunity Context</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:12px">`;
+    right+=`<div><span style="color:var(--text-muted)">Confidence</span></div><div>${matchedOpp.confidence!=null?(matchedOpp.confidence*100).toFixed(0)+'%':'--'}</div>`;
+    right+=`<div><span style="color:var(--text-muted)">Book depth</span></div><div>${matchedOpp.book_depth_ratio!=null?matchedOpp.book_depth_ratio.toFixed(2):'--'}</div>`;
+    right+=`<div><span style="color:var(--text-muted)">ROI</span></div><div>${matchedOpp.roi_pct!=null?matchedOpp.roi_pct.toFixed(1)+'%':'--'}</div>`;
+    right+=`<div><span style="color:var(--text-muted)">Capital req.</span></div><div>$${matchedOpp.required_capital!=null?matchedOpp.required_capital.toFixed(2):'--'}</div>`;
+    right+=`<div><span style="color:var(--text-muted)">Volume</span></div><div>${matchedOpp.market_volume!=null&&matchedOpp.market_volume>0?'$'+matchedOpp.market_volume.toLocaleString():'--'}</div>`;
+    if(matchedOpp.time_to_resolution_hrs!=null){
+      const hrs=matchedOpp.time_to_resolution_hrs;
+      const ttl=hrs<24?hrs.toFixed(0)+'h':hrs<720?(hrs/24).toFixed(0)+'d':(hrs/720).toFixed(1)+'mo';
+      right+=`<div><span style="color:var(--text-muted)">Time to resolve</span></div><div>${ttl}</div>`;
+    }
+    right+=`</div>`;
+    // Event ID for verification
+    right+=`<div style="margin-top:8px;font-size:11px;font-family:monospace;color:var(--text-muted);word-break:break-all">Event: ${t.event_id}</div>`;
+  } else {
+    right+=`<div style="color:var(--text-muted);font-size:12px">Score breakdown not available (opportunity data rotated out)</div>`;
+    right+=`<div style="margin-top:8px;font-size:11px;font-family:monospace;color:var(--text-muted);word-break:break-all">Event: ${t.event_id}</div>`;
+  }
+
+  body.innerHTML=`<div class="tb-grid three"><div>${left}</div><div>${mid}</div><div>${right}</div></div>`;
+  panel.style.display='flex';
+}
+
+// ── P&L & Trades ──
+function renderPnL(pnl,trades,opps,crossPlatform){
+  if(pnl&&pnl.length){
+    const times=pnl.map(p=>new Date(p.timestamp*1000));
+    Plotly.react('chart-pnl',[
+      {type:'scatter',mode:'lines',name:'Cumulative P&L',x:times,y:pnl.map(p=>p.cumulative_pnl),fill:'tozeroy',
+       line:{color:'#3fb950',width:2},fillcolor:'rgba(63,185,80,0.1)'},
+      {type:'bar',name:'Trade P&L',x:times,y:pnl.map(p=>p.net_pnl),
+       marker:{color:pnl.map(p=>p.net_pnl>=0?'rgba(63,185,80,0.6)':'rgba(248,81,73,0.6)')},yaxis:'y2'}
+    ],{...plotLayout,title:'Cumulative P&L',
+      yaxis:{...plotLayout.yaxis,title:'Cumulative ($)'},
+      yaxis2:{overlaying:'y',side:'right',title:'Trade P&L ($)',gridcolor:'transparent',color:plotText},
+      showlegend:true,legend:{x:0,y:1.1,orientation:'h'}},plotConfig);
+  } else {
+    Plotly.purge('chart-pnl');
+  }
+
+  // Execution precision line
+  const precEl=document.getElementById('exec-precision');
+  if(trades&&trades.length&&precEl){
+    const realTrades=trades.filter(t=>!t.simulated);
+    const simCount=trades.length-realTrades.length;
+    if(realTrades.length>0){
+      const fullFills=realTrades.filter(t=>t.fully_filled).length;
+      const fillRate=((fullFills/realTrades.length)*100).toFixed(0);
+      const avgExec=(realTrades.reduce((s,t)=>s+t.execution_time_ms,0)/realTrades.length).toFixed(0);
+      const avgCost=(realTrades.reduce((s,t)=>s+t.fees+t.gas_cost,0)/realTrades.length).toFixed(3);
+      let precHtml=`<span>${fillRate}% full fill rate</span><span>${avgExec}ms avg execution</span><span>$${avgCost} avg cost/trade</span>`;
+      if(simCount>0) precHtml+=`<span>${simCount} simulated trades excluded from metrics</span>`;
+      precEl.innerHTML=precHtml;
+    } else {
+      precEl.innerHTML=`<span>All ${simCount} trades are simulated (scan-only mode) — execution metrics not available</span>`;
+    }
+    precEl.style.display='flex';
+  } else if(precEl){
+    precEl.style.display='none';
+  }
+
+  const wrap=document.getElementById('trades-table-wrap');
+  if(!trades||!trades.length){wrap.innerHTML='<div class="empty-state">No trades recorded</div>';return;}
+  let html='<table><thead><tr><th>Time</th><th>Type</th><th>Event</th><th>Legs</th><th>Filled</th><th>Fees</th><th>Gas</th><th>Net P&L</th><th>Exec ms</th><th>Score</th></tr></thead><tbody>';
+  trades.forEach(t=>{
+    const time=new Date(t.timestamp*1000).toLocaleTimeString();
+    const cls=t.net_pnl>=0?'pnl-pos':'pnl-neg';
+    const simBadge=t.simulated?'<span class="badge-sim">SIM</span> ':'';
+    html+=`<tr><td>${time}</td><td>${simBadge}${t.opp_type.replace(/_/g,' ')}</td><td>${t.event_id.slice(0,12)}</td><td>${t.n_legs}</td><td>${t.fully_filled?'Yes':'Partial'}</td><td>$${t.fees.toFixed(3)}</td><td>$${t.gas_cost.toFixed(3)}</td><td class="${cls}">$${t.net_pnl.toFixed(2)}</td><td>${t.execution_time_ms.toFixed(0)}</td><td>${t.total_score.toFixed(2)}</td></tr>`;
+  });
+  html+='</tbody></table>';
+  wrap.innerHTML=html;
+  // Build event_id → opportunity lookup for score cross-reference
+  const oppByEvent={};
+  if(opps&&opps.length){
+    opps.forEach(o=>{
+      const key=o.event_id+'|'+o.opp_type;
+      if(!oppByEvent[key]||o.total_score>oppByEvent[key].total_score) oppByEvent[key]=o;
+    });
+  }
+
+  // Build event_id → cross-platform match lookup
+  const xplatByEvent={};
+  if(crossPlatform&&crossPlatform.length){
+    crossPlatform.forEach(m=>{
+      if(!xplatByEvent[m.pm_event_id]||m.price_diff>xplatByEvent[m.pm_event_id].price_diff) xplatByEvent[m.pm_event_id]=m;
+    });
+  }
+
+  const rows=wrap.querySelectorAll('tbody tr');
+  rows.forEach((row,idx)=>{
+    row.classList.add('clickable-row');
+    row.title='Click for trade breakdown';
+    row.onclick=()=>{
+      const t=trades[idx];
+      const matchedOpp=oppByEvent[t.event_id+'|'+t.opp_type]||null;
+      const xplatMatch=xplatByEvent[t.event_id]||null;
+      showTradeBreakdown(t,matchedOpp,xplatMatch);
+      row.classList.add('row-focus');
+      setTimeout(()=>row.classList.remove('row-focus'),1800);
+    };
+  });
+}
+
+// ── Scanners ──
+function renderScanners(scanners,trades){
+  const effWrap=document.getElementById('scanner-efficiency-wrap');
+  if(!scanners||!scanners.length){Plotly.purge('chart-scanners');if(effWrap)effWrap.innerHTML='';return;}
+  const colors=['#58a6ff','#3fb950','#d29922','#f85149','#bc8cff','#f778ba','#79c0ff','#56d364','#e3b341'];
+  Plotly.react('chart-scanners',[{
+    type:'pie',labels:scanners.map(s=>s.scanner.replace(/_/g,' ')),values:scanners.map(s=>s.total_count),
+    marker:{colors:colors},textinfo:'label+percent',hole:0.4
+  }],{...plotLayout,title:'Detection Volume'},plotConfig);
+
+  // Scanner efficiency table from trades
+  if(effWrap&&trades&&trades.length){
+    const byScanner={};
+    trades.forEach(t=>{
+      const key=t.opp_type||'unknown';
+      if(!byScanner[key])byScanner[key]={count:0,wins:0,pnl:0};
+      byScanner[key].count++;
+      if(t.net_pnl>0)byScanner[key].wins++;
+      byScanner[key].pnl+=t.net_pnl;
+    });
+    const rows=Object.entries(byScanner).sort((a,b)=>b[1].pnl-a[1].pnl);
+    let html='<h3>Scanner Profitability</h3><table><thead><tr><th>Scanner</th><th>Trades</th><th>Win Rate</th><th>Total P&L</th><th>Avg/Trade</th><th>Verdict</th></tr></thead><tbody>';
+    rows.forEach(([name,d])=>{
+      const wr=((d.wins/d.count)*100).toFixed(0);
+      const avg=(d.pnl/d.count).toFixed(2);
+      let verdict,cls;
+      if(d.pnl>0&&d.wins/d.count>=0.5){verdict='Profitable';cls='verdict-profitable';}
+      else if(d.pnl>=0){verdict='Marginal';cls='verdict-marginal';}
+      else{verdict='Losing';cls='verdict-losing';}
+      html+=`<tr><td>${name.replace(/_/g,' ')}</td><td>${d.count}</td><td>${wr}%</td><td class="${d.pnl>=0?'pnl-pos':'pnl-neg'}">$${d.pnl.toFixed(2)}</td><td>$${avg}</td><td class="${cls}">${verdict}</td></tr>`;
+    });
+    html+='</tbody></table>';
+    effWrap.innerHTML=html;
+  } else if(effWrap){
+    effWrap.innerHTML='<div class="empty-state" style="padding:20px">No trades to analyze profitability</div>';
+  }
+}
+
+// ── Risk ──
+function renderRisk(safety,cycles){
+  // Safety pass rates
+  if(safety&&safety.length){
+    const counts={};
+    safety.forEach(s=>{counts[s.check_name]=(counts[s.check_name]||0)+1;});
+    const names=Object.keys(counts).sort((a,b)=>counts[b]-counts[a]);
+    const total=safety.length;
+    const riskTitle=`${total} trades blocked by safety checks`;
+    Plotly.react('chart-safety-rates',[{
+      type:'bar',orientation:'h',x:names.map(n=>counts[n]),y:names,
+      marker:{color:'#f85149'},text:names.map(n=>`${counts[n]} (${(counts[n]/total*100).toFixed(0)}%)`),textposition:'auto'
+    }],{...plotLayout,title:riskTitle,yaxis:{...plotLayout.yaxis,automargin:true}},plotConfig);
+  }
+
+  // Gas over cycles
+  if(cycles&&cycles.length){
+    const sorted=[...cycles].sort((a,b)=>a.cycle_num-b.cycle_num);
+    Plotly.react('chart-gas',[{
+      type:'scatter',mode:'lines',x:sorted.map(c=>c.cycle_num),y:sorted.map(c=>c.gas_price_gwei),
+      line:{color:'#d29922',width:2},fill:'tozeroy',fillcolor:'rgba(210,153,34,0.1)'
+    }],{...plotLayout,title:'Gas Price Over Cycles',xaxis:{...plotLayout.xaxis,title:'Cycle'},yaxis:{...plotLayout.yaxis,title:'Gas (gwei)'}},plotConfig);
+  }
+}
+
+// ── Readiness ──
+function renderReadiness(readiness){
+  if(!readiness){Plotly.purge('chart-gauge');return;}
+  const score=readiness.score;
+  const color=score>=70?'#3fb950':score>=40?'#d29922':'#f85149';
+  Plotly.react('chart-gauge',[{type:'indicator',mode:'gauge+number',value:score,
+    gauge:{axis:{range:[0,100],tickcolor:plotText},bar:{color:color},
+      steps:[{range:[0,40],color:'rgba(248,81,73,0.15)'},{range:[40,70],color:'rgba(210,153,34,0.15)'},{range:[70,100],color:'rgba(63,185,80,0.15)'}],
+      threshold:{line:{color:color,width:4},thickness:0.75,value:score}},
+    number:{font:{size:36,color:color}},title:{text:readiness.recommendation,font:{size:18,color:color}}}],
+  {...plotLayout,height:250},plotConfig);
+
+  // Checklist with action hints for failing checks
+  const isSim=readiness.simulated_only||false;
+  const actionMap={
+    win_rate:isSim?'Simulated data — win rate reflects detected edge quality, not fill certainty. Run live to validate.':'Increase min edge thresholds to filter lower-quality opportunities. Target: 60%.',
+    safety_pass_rate:'Review rejection reasons in Risk Dashboard. Relax depth/staleness if rejections are false positives.',
+    circuit_breaker:'Reduce position sizes or tighten edge requirements to break the losing streak pattern.',
+    pnl_trend:isSim?'Simulated P&L assumes perfect fills. Actual performance will differ due to slippage and partial fills.':'Examine which scanner types generate losses. Consider disabling unprofitable scanners.',
+    execution_speed:isSim?'No execution data in scan-only mode. Run paper or live trading to measure execution latency.':'Check network latency. If on-chain execution is slow, reduce batch sizes.',
+    opportunity_consistency:'Run more cycles or expand market coverage. Low consistency may indicate too-tight filters.'
+  };
+  const totalWeight=readiness.checks.reduce((s,c)=>s+c.weight,0);
+  const list=document.getElementById('readiness-checklist');
+  list.innerHTML=readiness.checks.map(c=>{
+    const weightPct=((c.weight/totalWeight)*100).toFixed(0);
+    let html=`<li><span class="${c.passed?'check-pass':'check-fail'}">${c.passed?'&#10003;':'&#10007;'}</span><strong>${c.name.replace(/_/g,' ')}</strong> (${weightPct}%): ${c.detail}`;
+    if(!c.passed&&actionMap[c.name]){
+      html+=`<span class="action-hint">\u2794 ${actionMap[c.name]}</span>`;
+    }
+    html+='</li>';
+    return html;
+  }).join('');
+
+  // Summary with priority fix
+  const failing=readiness.checks.filter(c=>!c.passed).sort((a,b)=>b.weight-a.weight);
+  let summary=readiness.summary;
+  if(failing.length>0){
+    summary+=` Priority fix: ${failing[0].name.replace(/_/g,' ')}.`;
+  }
+  document.getElementById('readiness-summary').textContent=summary;
+}
+
+// ── Untapped ──
+function renderUntapped(untapped,safety,session){
+  const wrap=document.getElementById('untapped-table-wrap');
+  if(!untapped||!untapped.length){
+    wrap.innerHTML='<div class="empty-state">No untapped opportunities — safety checks passed everything worth trading</div>';
+    document.getElementById('untapped-insight').textContent='';
+    return;
+  }
+
+  // Insight with % of realized P&L
+  const totalLeft=untapped.reduce((s,u)=>s+(u.net_profit||0),0);
+  const realizedPnl=session?Math.abs(session.total_pnl||0):0;
+  const pctOfRealized=realizedPnl>0?((totalLeft/realizedPnl)*100).toFixed(0):'--';
+  const blockers={};
+  untapped.forEach(u=>{blockers[u.check_name]=(blockers[u.check_name]||0)+1;});
+  const topBlockers=Object.entries(blockers).sort((a,b)=>b[1]-a[1]).slice(0,3);
+  const total=untapped.length;
+  const blockerStr=topBlockers.map(([name,cnt])=>`${name} (${cnt}/${total})`).join(', ');
+  let insightText=`$${totalLeft.toFixed(2)} in potential profit rejected by safety`;
+  if(realizedPnl>0)insightText+=` — ${pctOfRealized}% of realized P&L`;
+  insightText+=`. Top blockers: ${blockerStr}.`;
+  if(topBlockers.length>0){
+    const topName=topBlockers[0][0];
+    const topPct=((topBlockers[0][1]/total)*100).toFixed(0);
+    insightText+=` Relaxing "${topName}" would unlock ${topPct}% of these opportunities.`;
+  }
+  document.getElementById('untapped-insight').textContent=insightText;
+
+  let html='<table><thead><tr><th>Event</th><th>Type</th><th>Net Profit</th><th>ROI %</th><th>Score</th><th>Blocked By</th><th>Reason</th></tr></thead><tbody>';
+  untapped.forEach(u=>{
+    html+=`<tr><td>${(u.event_id||'').slice(0,12)}</td><td>${(u.opp_type||'').replace(/_/g,' ')}</td><td class="pnl-pos">$${(u.net_profit||0).toFixed(2)}</td><td>${(u.roi_pct||0).toFixed(1)}%</td><td>${(u.total_score||0).toFixed(2)}</td><td>${u.check_name}</td><td>${(u.reason||'').slice(0,60)}</td></tr>`;
+  });
+  html+='</tbody></table>';
+  wrap.innerHTML=html;
+  const rows=wrap.querySelectorAll('tbody tr');
+  rows.forEach((row,idx)=>{
+    row.classList.add('clickable-row');
+    row.title='Click for quick deep dive';
+    row.onclick=()=>{
+      const u=untapped[idx];
+      showDeepDive('Rejected Opportunity',[
+        `Check: ${u.check_name}`,
+        `Potential P&L: $${(u.net_profit||0).toFixed(2)}`,
+        `ROI: ${(u.roi_pct||0).toFixed(1)}%`,
+        `Score: ${(u.total_score||0).toFixed(2)}`,
+        `Reason: ${(u.reason||'n/a').slice(0,90)}`,
+      ]);
+      row.classList.add('row-focus');
+      setTimeout(()=>row.classList.remove('row-focus'),1800);
+    };
+  });
+}
+
+// ── SSE + polling ──
+let _reloadTimer=null;
+const RELOAD_DEBOUNCE_MS=2000; // avoid double-fetch when SSE fires in quick succession
+const POLL_INTERVAL_MS=30000;  // fallback poll every 30s when SSE is down
+let _pollTimer=null;
+
+function _debouncedReload(){
+  if(!currentSession)return;
+  if(_reloadTimer)clearTimeout(_reloadTimer);
+  _reloadTimer=setTimeout(()=>{loadSession(currentSession);_reloadTimer=null;},RELOAD_DEBOUNCE_MS);
+}
+
+function _startPolling(){
+  _stopPolling();
+  _pollTimer=setInterval(()=>{if(currentSession)loadSession(currentSession);},POLL_INTERVAL_MS);
+}
+
+function _stopPolling(){
+  if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null;}
+}
+
+function startSSE(){
+  if(evtSource)evtSource.close();
+  evtSource=new EventSource(API+'/api/live');
+  const status=document.getElementById('live-status');
+  evtSource.onopen=()=>{
+    status.innerHTML='<span class="live-dot"></span> Live feed connected';
+    _stopPolling(); // SSE is healthy, no need for polling
+  };
+  evtSource.onerror=()=>{
+    status.textContent='Disconnected (polling every 30s)';
+    _startPolling(); // fall back to polling while SSE reconnects
+  };
+  evtSource.onmessage=(e)=>{
+    try{
+      const data=JSON.parse(e.data);
+      status.innerHTML=`<span class="live-dot"></span> Live · cycle ${data.cycle||'?'} · ${new Date().toLocaleTimeString()}`;
+      // Quick KPI updates (instant, no fetch)
+      const el=id=>document.getElementById(id);
+      if(data.cycle) el('kpi-cycles').textContent=data.cycle;
+      if(data.strategy){
+        const m=data.strategy;
+        if(m.mode) el('kpi-strategy').innerHTML=`<span class="badge badge-${m.mode}">${m.mode}</span>`;
+        if(m.gas_price_gwei!=null) el('kpi-gas').textContent=`Gas: ${m.gas_price_gwei.toFixed(0)} gwei`;
+      }
+      if(data.funnel){
+        const opps=data.funnel.opps_found||data.funnel.opps_scored||0;
+        if(opps) el('kpi-opps').textContent=opps.toLocaleString();
+      }
+      // Full reload every cycle (debounced to avoid rapid double-fetch)
+      _debouncedReload();
+    }catch(err){}
+  };
+}
+
+// ── Init ──
+attachSectionLinks();
+loadSessions();
+startSSE();
+_startPolling(); // start polling immediately; SSE onopen will stop it
+</script>
+
+<div class="deep-dive-panel" id="deep-dive-panel" style="display:none">
+  <div class="deep-dive-head">
+    <h3 id="deep-dive-title">Deep Dive</h3>
+    <button class="deep-link" onclick="clearDeepDive()">Clear</button>
+  </div>
+  <div class="deep-dive-body" id="deep-dive-body"></div>
+</div>
+
+</body>
+</html>

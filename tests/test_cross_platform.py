@@ -4,6 +4,7 @@ Unit tests for scanner/cross_platform.py -- cross-platform arbitrage scanner.
 
 import pytest
 
+from client.kalshi import KalshiMarket
 from scanner.cross_platform import scan_cross_platform, _check_cross_platform_arb
 from scanner.matching import MatchedEvent, PlatformMatch
 from scanner.models import (
@@ -340,3 +341,95 @@ class TestScanCrossPlatform:
             gas_per_order=150000,
         )
         assert len(opps) == 0
+
+    def test_contract_level_matching_uses_correct_market_pair(self):
+        """Multi-market events should use contract-level matching, not first-contract fallback."""
+        pm_eth = Market(
+            condition_id="c1",
+            question="Will ETH be above $5,000 on Dec 31?",
+            yes_token_id="y_eth",
+            no_token_id="n_eth",
+            neg_risk=False,
+            event_id="e_multi",
+            min_tick_size="0.01",
+            active=True,
+            volume=1000.0,
+        )
+        pm_btc = Market(
+            condition_id="c2",
+            question="Will BTC be above $100,000 on Dec 31?",
+            yes_token_id="y_btc",
+            no_token_id="n_btc",
+            neg_risk=False,
+            event_id="e_multi",
+            min_tick_size="0.01",
+            active=True,
+            volume=1000.0,
+        )
+
+        match = MatchedEvent(
+            pm_event_id="e_multi",
+            pm_markets=(pm_eth, pm_btc),
+            platform_matches=(
+                PlatformMatch(
+                    platform="kalshi",
+                    event_ticker="K-EVT",
+                    tickers=("K-ETH", "K-BTC"),
+                    confidence=1.0,
+                    match_method="manual",
+                ),
+            ),
+        )
+
+        pm_books = {
+            # ETH pair not arb
+            "y_eth": _make_book("y_eth", 0.59, 200, 0.60, 200),
+            "n_eth": _make_book("n_eth", 0.59, 200, 0.60, 200),
+            # BTC pair has arb via PM NO + Kalshi YES
+            "y_btc": _make_book("y_btc", 0.54, 200, 0.55, 200),
+            "n_btc": _make_book("n_btc", 0.34, 200, 0.35, 200),
+        }
+        kalshi_books = {
+            "K-ETH": _make_book("K-ETH", 0.59, 200, 0.60, 200),
+            "K-BTC": _make_book("K-BTC", 0.54, 200, 0.55, 200),
+        }
+        platform_markets = {
+            "kalshi": [
+                KalshiMarket(
+                    ticker="K-ETH",
+                    event_ticker="K-EVT",
+                    title="Will ETH be above $5,000 on Dec 31?",
+                    subtitle="",
+                    yes_sub_title="Yes",
+                    no_sub_title="No",
+                    status="open",
+                    result="",
+                ),
+                KalshiMarket(
+                    ticker="K-BTC",
+                    event_ticker="K-EVT",
+                    title="Will BTC be above $100,000 on Dec 31?",
+                    subtitle="",
+                    yes_sub_title="Yes",
+                    no_sub_title="No",
+                    status="open",
+                    result="",
+                ),
+            ]
+        }
+
+        opps = scan_cross_platform(
+            [match],
+            pm_books,
+            {"kalshi": kalshi_books},
+            min_profit_usd=0.01,
+            min_roi_pct=0.1,
+            gas_per_order=150000,
+            platform_markets=platform_markets,
+        )
+
+        assert len(opps) >= 1
+        assert any(
+            any(leg.token_id in ("n_btc", "K-BTC") for leg in opp.legs)
+            for opp in opps
+        )

@@ -30,6 +30,8 @@ class ScoringContext:
     is_spike: bool = False
     book_depth_ratio: float = 1.0  # available_depth / requested_size
     confidence: float = 0.5  # ArbTracker persistence confidence (0.0-1.0)
+    realized_ev_score: float = 0.5  # historical realized-edge quality (0.0-1.0)
+    ofi_divergence: float = 0.0  # OFI divergence between YES/NO tokens (0.0 = neutral)
 
 
 @dataclass(frozen=True)
@@ -43,15 +45,19 @@ class ScoredOpportunity:
     urgency_score: float
     competition_score: float
     persistence_score: float = 0.5
+    realized_ev_score: float = 0.5
+    ofi_score: float = 0.0
 
 
-# Scoring weights
-W_PROFIT = 0.22
-W_FILL = 0.22
-W_EFFICIENCY = 0.17
-W_URGENCY = 0.17
-W_COMPETITION = 0.07
-W_PERSISTENCE = 0.15
+# Scoring weights (must sum to 1.0)
+W_PROFIT = 0.20
+W_FILL = 0.20
+W_EFFICIENCY = 0.15
+W_URGENCY = 0.15
+W_COMPETITION = 0.00
+W_PERSISTENCE = 0.10
+W_REALIZED_EV = 0.10
+W_OFI = 0.10
 
 
 def score_opportunity(
@@ -69,6 +75,8 @@ def score_opportunity(
     urgency_score = _score_urgency(opp, ctx)
     competition_score = _score_competition(ctx)
     persistence_score = ctx.confidence
+    realized_ev_score = ctx.realized_ev_score
+    ofi_score = _score_ofi(ctx)
 
     total = (
         W_PROFIT * profit_score
@@ -77,6 +85,8 @@ def score_opportunity(
         + W_URGENCY * urgency_score
         + W_COMPETITION * competition_score
         + W_PERSISTENCE * persistence_score
+        + W_REALIZED_EV * realized_ev_score
+        + W_OFI * ofi_score
     )
 
     return ScoredOpportunity(
@@ -88,6 +98,8 @@ def score_opportunity(
         urgency_score=urgency_score,
         competition_score=competition_score,
         persistence_score=persistence_score,
+        realized_ev_score=realized_ev_score,
+        ofi_score=ofi_score,
     )
 
 
@@ -160,6 +172,21 @@ def _score_competition(ctx: ScoringContext) -> float:
     return max(0.10, math.exp(-ctx.recent_trade_count / 20.0))
 
 
+def _score_ofi(ctx: ScoringContext) -> float:
+    """
+    Order Flow Imbalance divergence score.
+    High absolute divergence = market about to correct toward our arb.
+    0 divergence → 0.0 (neutral, no signal)
+    50+ divergence → ~0.80
+    200+ divergence → 1.0
+    """
+    div = abs(ctx.ofi_divergence)
+    if div <= 0:
+        return 0.0
+    # Logarithmic scaling: log10(1 + div) / log10(201) → 0..1
+    return min(1.0, math.log10(1.0 + div) / math.log10(201.0))
+
+
 def rank_opportunities(
     opps: list[Opportunity],
     contexts: list[ScoringContext] | None = None,
@@ -173,7 +200,17 @@ def rank_opportunities(
 
     if contexts is None:
         contexts = [ScoringContext() for _ in opps]
+    elif len(contexts) != len(opps):
+        logger.warning(
+            "Context/opportunity length mismatch: %d contexts for %d opportunities; "
+            "missing contexts will use defaults.",
+            len(contexts), len(opps),
+        )
 
-    scored = [score_opportunity(opp, ctx) for opp, ctx in zip(opps, contexts)]
+    scored: list[ScoredOpportunity] = []
+    for i, opp in enumerate(opps):
+        ctx = contexts[i] if i < len(contexts) else ScoringContext()
+        scored.append(score_opportunity(opp, ctx))
+
     scored.sort(key=lambda s: s.total_score, reverse=True)
     return scored

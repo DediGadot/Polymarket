@@ -11,6 +11,7 @@ from scanner.depth import (
     depth_profile,
     find_deep_binary_arb,
     find_deep_negrisk_arb,
+    slippage_ceiling,
 )
 from scanner.models import OrderBook, PriceLevel, Side
 
@@ -182,3 +183,54 @@ class TestFindDeepNegriskArb:
         books = {"y1": _make_book("y1", asks=[PriceLevel(0.30, 100)])}
         result = find_deep_negrisk_arb(books, ["y1", "y2"], target_size=50)
         assert result is None
+
+
+class TestSlippageCeiling:
+    def test_buy_ceiling_widens_with_edge(self):
+        """Larger edge allows higher price ceiling for buys."""
+        tight = slippage_ceiling(0.50, edge_pct=1.0, side=Side.BUY)
+        wide = slippage_ceiling(0.50, edge_pct=5.0, side=Side.BUY)
+        assert wide > tight > 0.50
+
+    def test_sell_floor_narrows_with_edge(self):
+        """Larger edge allows lower price floor for sells."""
+        tight = slippage_ceiling(0.50, edge_pct=1.0, side=Side.SELL)
+        wide = slippage_ceiling(0.50, edge_pct=5.0, side=Side.SELL)
+        assert wide < tight < 0.50
+
+    def test_max_slippage_cap(self):
+        """Slippage should be capped at max_slippage_pct."""
+        # Huge edge should still be capped
+        result = slippage_ceiling(0.50, edge_pct=100.0, side=Side.BUY, max_slippage_pct=3.0)
+        expected = 0.50 * (1.0 + 3.0 / 100.0)
+        assert abs(result - expected) < 1e-9
+
+    def test_fee_pct_tightens_ceiling(self):
+        """Fee deduction reduces net edge, tightening the slippage ceiling."""
+        # 3% edge with no fee
+        no_fee = slippage_ceiling(0.50, edge_pct=3.0, side=Side.BUY, fee_pct=0.0)
+        # 3% edge with 2% fee → 1% net edge
+        with_fee = slippage_ceiling(0.50, edge_pct=3.0, side=Side.BUY, fee_pct=2.0)
+        assert with_fee < no_fee
+        assert with_fee > 0.50  # still above base
+
+    def test_fee_exceeds_edge_zero_slippage(self):
+        """When fee >= edge, net edge is 0 → no slippage allowed."""
+        result = slippage_ceiling(0.50, edge_pct=1.5, side=Side.BUY, fee_pct=2.0)
+        assert abs(result - 0.50) < 1e-9  # ceiling equals base price
+
+    def test_fee_pct_sell_side(self):
+        """Fee deduction works correctly for sell side too."""
+        no_fee = slippage_ceiling(0.50, edge_pct=3.0, side=Side.SELL, fee_pct=0.0)
+        with_fee = slippage_ceiling(0.50, edge_pct=3.0, side=Side.SELL, fee_pct=2.0)
+        # With fee, floor should be higher (less slippage allowed)
+        assert with_fee > no_fee
+        assert with_fee < 0.50  # still below base
+
+    def test_exact_net_edge_calculation(self):
+        """Verify exact slippage ceiling with fee_pct=2.0."""
+        # edge=5%, fee=2% → net_edge=3%, slippage_fraction=0.4 → 1.2% slip
+        result = slippage_ceiling(0.50, edge_pct=5.0, side=Side.BUY,
+                                  slippage_fraction=0.4, fee_pct=2.0)
+        expected = 0.50 * (1.0 + 1.2 / 100.0)
+        assert abs(result - expected) < 1e-9

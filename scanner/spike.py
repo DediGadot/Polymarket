@@ -95,6 +95,20 @@ class PriceHistory:
             return None
         return ((self._points[-1][1] - oldest_price) / oldest_price) * 100.0
 
+    def to_dict(self) -> dict:
+        """Serialize to a JSON-safe dict."""
+        return {
+            "max_window_sec": self.max_window_sec,
+            "points": [list(p) for p in self._points],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> PriceHistory:
+        """Restore from a serialized dict."""
+        h = cls(max_window_sec=data.get("max_window_sec", 300.0))
+        h._points = deque(tuple(p) for p in data.get("points", []))
+        return h
+
     @property
     def latest(self) -> tuple[float, float] | None:
         """Most recent (timestamp, price) or None."""
@@ -187,6 +201,30 @@ class SpikeDetector:
                 self._cooldowns[token_id] = now
 
         return spikes
+
+    def to_dict(self) -> dict:
+        """Serialize detector state to a JSON-safe dict."""
+        return {
+            "threshold_pct": self.threshold_pct,
+            "window_sec": self.window_sec,
+            "cooldown_sec": self.cooldown_sec,
+            "histories": {k: v.to_dict() for k, v in self._histories.items()},
+            "cooldowns": dict(self._cooldowns),
+            "token_events": dict(self._token_events),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> SpikeDetector:
+        """Restore detector from a serialized dict."""
+        d = cls(
+            threshold_pct=data.get("threshold_pct", 5.0),
+            window_sec=data.get("window_sec", 30.0),
+            cooldown_sec=data.get("cooldown_sec", 60.0),
+        )
+        d._histories = {k: PriceHistory.from_dict(v) for k, v in data.get("histories", {}).items()}
+        d._cooldowns = dict(data.get("cooldowns", {}))
+        d._token_events = dict(data.get("token_events", {}))
+        return d
 
     def get_velocity(self, token_id: str, window_sec: float | None = None) -> float | None:
         """Get price velocity for a token."""

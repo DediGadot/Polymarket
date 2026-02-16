@@ -8,6 +8,8 @@ All prices are in cents (1-99). We convert to dollars (0.01-0.99) to match our O
 from __future__ import annotations
 
 import logging
+import random
+import time
 from dataclasses import dataclass
 
 import httpx
@@ -20,6 +22,11 @@ logger = logging.getLogger(__name__)
 
 # Kalshi API rate limits: 20 reads/sec basic tier
 DEFAULT_TIMEOUT = 10.0
+_MAX_READS_PER_SEC = 10  # stay well under 20/sec limit
+_PAGE_DELAY_SEC = 1.0 / _MAX_READS_PER_SEC  # 100ms between paginated requests
+_429_MAX_RETRIES = 3
+_429_BACKOFF_SEC = 5.0
+_429_JITTER_FRAC = 0.15
 
 
 def dollars_to_cents(price: float) -> int:
@@ -35,7 +42,7 @@ def dollars_to_cents(price: float) -> int:
     return cents
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class KalshiMarket:
     """Minimal representation of a Kalshi market (event + ticker)."""
     ticker: str
@@ -74,20 +81,58 @@ class KalshiClient:
         if demo:
             self._host = "https://demo-api.kalshi.co/trade-api/v2"
         self._http = httpx.Client(timeout=DEFAULT_TIMEOUT)
+        self._rate_limited_until: dict[str, float] = {}
 
     def _request(self, method: str, path: str, **kwargs) -> dict:
-        """Make an authenticated request to Kalshi API."""
+        """Make an authenticated request to Kalshi API. Retries on 429."""
         url = f"{self._host}{path}"
         # Sign with the full URL path (e.g. /trade-api/v2/markets), not the relative path.
         from urllib.parse import urlparse
         full_path = urlparse(url).path
-        headers = self._auth.sign_request(method, full_path)
-        headers["Content-Type"] = "application/json"
-        headers["Accept"] = "application/json"
+        cooldown_key = f"{method}:{path}"
 
-        resp = self._http.request(method, url, headers=headers, **kwargs)
+        now = time.time()
+        blocked_until = self._rate_limited_until.get(cooldown_key, 0.0)
+        if blocked_until > now:
+            wait = blocked_until - now
+            logger.debug(
+                "Kalshi cooldown active on %s %s, sleeping %.1fs",
+                method, path, wait,
+            )
+            time.sleep(wait)
+
+        for attempt in range(_429_MAX_RETRIES + 1):
+            headers = self._auth.sign_request(method, full_path)
+            headers["Content-Type"] = "application/json"
+            headers["Accept"] = "application/json"
+
+            resp = self._http.request(method, url, headers=headers, **kwargs)
+            if resp.status_code != 429:
+                self._rate_limited_until.pop(cooldown_key, None)
+                resp.raise_for_status()
+                return resp.json()
+
+            # 429 Too Many Requests — back off and retry
+            retry_after = 0.0
+            raw_retry_after = resp.headers.get("Retry-After")
+            if raw_retry_after:
+                try:
+                    retry_after = max(0.0, float(raw_retry_after))
+                except ValueError:
+                    retry_after = 0.0
+            wait = max(retry_after, _429_BACKOFF_SEC * (2 ** attempt))
+            wait *= 1.0 + random.uniform(-_429_JITTER_FRAC, _429_JITTER_FRAC)
+            wait = max(0.5, wait)
+            self._rate_limited_until[cooldown_key] = time.time() + wait
+            logger.warning(
+                "Kalshi 429 rate limited on %s %s (attempt %d/%d, waiting %.1fs)",
+                method, path, attempt + 1, _429_MAX_RETRIES + 1, wait,
+            )
+            time.sleep(wait)
+
+        # All retries exhausted
         resp.raise_for_status()
-        return resp.json()
+        return resp.json()  # unreachable, raise_for_status throws
 
     # -- Market Discovery --
 
@@ -132,9 +177,10 @@ class KalshiClient:
         event_ticker: str | None = None,
         status: str = "open",
     ) -> list[KalshiMarket]:
-        """Fetch all markets with pagination."""
+        """Fetch all markets with pagination. Rate-limited to stay under API limits."""
         all_markets: list[KalshiMarket] = []
         cursor = None
+        page = 0
         while True:
             markets, cursor = self.get_markets(
                 event_ticker=event_ticker,
@@ -142,8 +188,12 @@ class KalshiClient:
                 cursor=cursor,
             )
             all_markets.extend(markets)
+            page += 1
             if not cursor or not markets:
                 break
+            # Rate limit: pause between pages to stay under 20 reads/sec
+            time.sleep(_PAGE_DELAY_SEC)
+        logger.debug("Fetched %d Kalshi markets in %d pages", len(all_markets), page)
         return all_markets
 
     # -- Orderbook --
@@ -308,3 +358,7 @@ class KalshiClient:
         """Get account balance in dollars."""
         data = self._request("GET", "/portfolio/balance")
         return data.get("balance", 0) / 100.0  # cents -> dollars
+
+    def close(self) -> None:
+        """Close the underlying HTTP client."""
+        self._http.close()

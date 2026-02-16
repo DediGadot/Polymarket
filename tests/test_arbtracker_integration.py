@@ -31,16 +31,16 @@ def _make_opp(event_id: str = "evt-123", net_profit: float = 5.0) -> Opportunity
 
 class TestArbTrackerIntegration:
     def test_first_seen_opportunity_gets_low_confidence(self):
-        """First-seen opportunity should have 0.3 confidence (thin book, has inventory)."""
+        """First-seen opportunity should have 0.1 confidence (thin book, has inventory)."""
         tracker = ArbTracker()
         opp1 = _make_opp(event_id="evt-123")
 
         # Record first sighting
         tracker.record(cycle_num=1, opportunities=[opp1])
 
-        # Confidence should be 0.3 for first-seen with thin depth
+        # Confidence should be 0.1 for first-seen with thin depth
         conf = tracker.confidence("evt-123", depth_ratio=1.0, has_inventory=True)
-        assert conf == 0.3, f"First-seen should have 0.3 confidence, got {conf}"
+        assert conf == 0.1, f"First-seen should have 0.1 confidence, got {conf}"
 
     def test_persistent_opportunity_gets_full_confidence(self):
         """Opportunity seen in consecutive cycles should have 1.0 confidence."""
@@ -56,16 +56,16 @@ class TestArbTrackerIntegration:
         assert conf == 1.0, f"Persistent should have 1.0 confidence, got {conf}"
 
     def test_deep_book_first_seen_gets_moderate_confidence(self):
-        """First-seen with deep book (ratio >= 2.0) should have 0.7 confidence."""
+        """First-seen with deep book (ratio >= 2.0) should have 0.3 confidence."""
         tracker = ArbTracker()
         opp1 = _make_opp(event_id="evt-123")
 
         # Record first sighting
         tracker.record(cycle_num=1, opportunities=[opp1])
 
-        # Confidence should be 0.7 for first-seen with deep book
+        # Confidence should be 0.3 for first-seen with deep book
         conf = tracker.confidence("evt-123", depth_ratio=2.0, has_inventory=True)
-        assert conf == 0.7, f"First-seen with deep book should have 0.7 confidence, got {conf}"
+        assert conf == 0.3, f"First-seen with deep book should have 0.3 confidence, got {conf}"
 
     def test_unknown_event_zero_confidence(self):
         """Unknown event should have 0.0 confidence."""
@@ -154,7 +154,7 @@ class TestArbTrackerIntegration:
 
         # Should not be considered persistent (needs 2+ consecutive cycles)
         conf = tracker.confidence("evt-123", depth_ratio=1.0, has_inventory=True)
-        assert conf == 0.3  # First-seen, not persistent
+        assert conf == 0.1  # First-seen, not persistent
 
 
 class TestArbTrackerScoringPipeline:

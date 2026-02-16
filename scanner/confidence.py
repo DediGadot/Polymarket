@@ -17,6 +17,7 @@ class ArbTracker:
     """Tracks which events appear across scan cycles and scores confidence."""
 
     _history: dict[str, list[int]] = field(default_factory=dict)
+    _failures: dict[str, int] = field(default_factory=dict)
     _max_history: int = 10
 
     def record(self, cycle_num: int, opportunities: list[Opportunity]) -> None:
@@ -30,6 +31,10 @@ class ArbTracker:
                 cycles.append(cycle_num)
         self._purge_stale(cycle_num)
 
+    def record_failure(self, event_id: str) -> None:
+        """Record a safety check failure for an event. Penalizes confidence."""
+        self._failures[event_id] = self._failures.get(event_id, 0) + 1
+
     def confidence(
         self,
         event_id: str,
@@ -42,8 +47,11 @@ class ArbTracker:
         - Unknown event: 0.0
         - Sell-side without inventory: 0.1
         - 2+ consecutive cycles: 1.0
-        - First-seen with depth_ratio >= 2.0: 0.7
-        - First-seen with depth_ratio < 2.0: 0.3
+        - First-seen with depth_ratio >= 2.0: 0.3
+        - First-seen with depth_ratio < 2.0: 0.1
+
+        Failure penalty: each recorded failure reduces base score by 20%,
+        floored at 0.05.
         """
         cycles = self._history.get(event_id)
         if not cycles:
@@ -53,12 +61,17 @@ class ArbTracker:
             return 0.1
 
         if self._is_persistent(cycles):
-            return 1.0
+            base = 1.0
+        elif depth_ratio >= 2.0:
+            base = 0.3
+        else:
+            base = 0.1
 
-        if depth_ratio >= 2.0:
-            return 0.7
+        failures = self._failures.get(event_id, 0)
+        if failures > 0:
+            base = max(base * (1 - failures * 0.2), 0.05)
 
-        return 0.3
+        return base
 
     def _is_persistent(self, cycles: list[int]) -> bool:
         """Check if the last 2 entries are consecutive cycle numbers."""
@@ -75,3 +88,20 @@ class ArbTracker:
         ]
         for eid in stale_keys:
             del self._history[eid]
+
+    def to_dict(self) -> dict:
+        """Serialize tracker state to a JSON-safe dict."""
+        return {
+            "history": {k: list(v) for k, v in self._history.items()},
+            "failures": dict(self._failures),
+            "max_history": self._max_history,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> ArbTracker:
+        """Restore tracker from a serialized dict."""
+        tracker = cls()
+        tracker._history = {k: list(v) for k, v in data.get("history", {}).items()}
+        tracker._failures = dict(data.get("failures", {}))
+        tracker._max_history = data.get("max_history", 10)
+        return tracker

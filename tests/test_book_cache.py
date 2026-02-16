@@ -306,6 +306,103 @@ class TestCachingFetcher:
         assert rest_calls == [["tok2"]]
 
 
+class TestPrefetchEliminatesRedundantCalls:
+    """Verify that pre-fetching books into cache prevents redundant REST calls
+    from multiple concurrent consumers (binary, maker, resolution scanners)."""
+
+    def test_prefetch_prevents_duplicate_rest_calls(self):
+        """After one prefetch, subsequent fetcher calls should be cache hits."""
+        from scanner.models import OrderBook, PriceLevel
+        cache = BookCache(max_age_sec=100.0)
+
+        # Simulate 4 binary markets (8 tokens)
+        token_ids = [f"yes_{i}" for i in range(4)] + [f"no_{i}" for i in range(4)]
+        books = {
+            tid: OrderBook(
+                token_id=tid,
+                bids=(PriceLevel(0.50, 100),),
+                asks=(PriceLevel(0.52, 100),),
+            )
+            for tid in token_ids
+        }
+
+        rest_call_count = 0
+
+        def mock_rest(tids: list[str]) -> dict:
+            nonlocal rest_call_count
+            rest_call_count += 1
+            return {tid: books[tid] for tid in tids if tid in books}
+
+        fetcher = cache.make_caching_fetcher(mock_rest)
+
+        # Pre-fetch all tokens (simulates the new prefetch step)
+        fetcher(token_ids)
+        assert rest_call_count == 1  # single REST batch
+
+        # Subsequent calls from different scanners should be pure cache hits
+        fetcher(token_ids)  # binary scanner
+        fetcher(token_ids)  # maker scanner
+        fetcher(token_ids)  # resolution scanner
+        assert rest_call_count == 1  # still only one REST call total
+
+    def test_prefetch_serves_correct_data(self):
+        """Pre-fetched books should have correct data for all consumers."""
+        from scanner.models import OrderBook, PriceLevel
+        cache = BookCache(max_age_sec=100.0)
+
+        books = {
+            "yes_0": OrderBook(token_id="yes_0", bids=(PriceLevel(0.30, 50),), asks=(PriceLevel(0.35, 50),)),
+            "no_0": OrderBook(token_id="no_0", bids=(PriceLevel(0.60, 80),), asks=(PriceLevel(0.65, 80),)),
+        }
+
+        def mock_rest(tids: list[str]) -> dict:
+            return {tid: books[tid] for tid in tids if tid in books}
+
+        fetcher = cache.make_caching_fetcher(mock_rest)
+        fetcher(["yes_0", "no_0"])  # prefetch
+
+        # Subsequent fetch returns same data
+        result = fetcher(["yes_0", "no_0"])
+        assert result["yes_0"].best_ask.price == 0.35
+        assert result["no_0"].best_bid.price == 0.60
+
+
+class TestBatchStalenessCheck:
+    """Verify stale_tokens uses efficient batch checking (single time.time())."""
+
+    def test_stale_tokens_batch_returns_correct_results(self):
+        """stale_tokens should return stale/missing tokens only."""
+        from scanner.models import OrderBook, PriceLevel
+        cache = BookCache(max_age_sec=100.0)
+        cache.store_book(OrderBook(token_id="fresh", bids=(PriceLevel(0.50, 100),), asks=()))
+        stale = cache.stale_tokens(["fresh", "missing1", "missing2"])
+        assert "fresh" not in stale
+        assert "missing1" in stale
+        assert "missing2" in stale
+
+    def test_caching_fetcher_returns_all_fresh_without_rest(self):
+        """When 1000 tokens are all fresh, no REST call and all returned."""
+        from scanner.models import OrderBook, PriceLevel
+        cache = BookCache(max_age_sec=100.0)
+        # Store 1000 books
+        for i in range(1000):
+            cache.store_book(OrderBook(
+                token_id=f"tok_{i}",
+                bids=(PriceLevel(0.50, 100),),
+                asks=(PriceLevel(0.52, 100),),
+            ))
+        rest_calls = []
+
+        def mock_rest(tids):
+            rest_calls.append(tids)
+            return {}
+
+        fetcher = cache.make_caching_fetcher(mock_rest)
+        result = fetcher([f"tok_{i}" for i in range(1000)])
+        assert len(rest_calls) == 0
+        assert len(result) == 1000
+
+
 class TestApplyLevelUpdate:
     def test_add_new_level(self):
         levels = (PriceLevel(0.50, 100.0),)

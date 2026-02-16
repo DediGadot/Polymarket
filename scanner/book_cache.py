@@ -143,8 +143,18 @@ class BookCache:
         return self.age(token_id) > self.max_age_sec
 
     def stale_tokens(self, token_ids: list[str]) -> list[str]:
-        """Return subset of token_ids whose cached books are stale or missing."""
-        return [tid for tid in token_ids if self.is_stale(tid)]
+        """Return subset of token_ids whose cached books are stale or missing.
+
+        Uses a single time.time() call and single lock acquisition instead of
+        per-token calls -- significant for 1000+ token batches.
+        """
+        now = time.time()
+        max_age = self.max_age_sec
+        with self._lock:
+            return [
+                tid for tid in token_ids
+                if now - self._timestamps.get(tid, 0) > max_age
+            ]
 
     def token_count(self) -> int:
         """Number of tokens currently cached."""
@@ -194,10 +204,10 @@ class BookCache:
     def make_caching_fetcher(self, rest_fetcher: BookFetcher) -> BookFetcher:
         """
         Return a BookFetcher callable that:
-          1. Checks cache for fresh books
+          1. Checks cache for fresh books (single lock, single time.time())
           2. REST-fetches only stale/missing tokens via rest_fetcher
           3. Stores fresh results in cache
-          4. Returns merged dict (cached + fresh)
+          4. Returns merged dict (cached + fresh) via batch get_books()
         """
         def _caching_fetcher(token_ids: list[str]) -> dict[str, OrderBook]:
             stale = self.stale_tokens(token_ids)
@@ -205,16 +215,10 @@ class BookCache:
             if stale:
                 fresh_from_rest = rest_fetcher(stale)
                 self.store_books(fresh_from_rest)
-            # Merge: cached books for non-stale tokens + fresh results
-            result: dict[str, OrderBook] = {}
-            for tid in token_ids:
-                if tid in fresh_from_rest:
-                    result[tid] = fresh_from_rest[tid]
-                else:
-                    book = self.get_book(tid)
-                    if book is not None:
-                        result[tid] = book
-            return result
+            # Merge via single lock acquisition for all cached books
+            non_stale = [tid for tid in token_ids if tid not in fresh_from_rest]
+            cached = self.get_books(non_stale)
+            return {**cached, **fresh_from_rest}
         return _caching_fetcher
 
     def get_all_books(self) -> dict[str, OrderBook]:

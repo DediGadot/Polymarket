@@ -135,6 +135,31 @@ class TestStatusWriter:
         assert "DRY-RUN" in content
         assert "500" in content
 
+    def test_lane_fields_when_provided(self, tmp_path):
+        path = str(tmp_path / "status.md")
+        writer = StatusWriter(file_path=path)
+        writer.write_cycle(
+            cycle=1,
+            mode="DRY-RUN",
+            markets_scanned=500,
+            scored_opps=[],
+            event_questions={},
+            total_opps_found=10,
+            total_trades_executed=0,
+            total_pnl=0.0,
+            current_exposure=0.0,
+            scan_only=True,
+            executable_lane_count=3,
+            research_lane_count=7,
+            executable_lane_profit=12.34,
+            research_lane_profit=56.78,
+        )
+        content = open(path).read()
+        assert "Executable lane (this cycle)" in content
+        assert "Research lane (this cycle)" in content
+        assert "$12.34" in content
+        assert "$56.78" in content
+
     def test_no_opportunities_message(self, tmp_path):
         path = str(tmp_path / "status.md")
         writer = StatusWriter(file_path=path)
@@ -175,6 +200,27 @@ class TestStatusWriter:
         assert "$2.50" in content
         assert "5.00%" in content
         assert "binary_rebalance" in content
+
+    def test_market_question_overrides_event_title(self, tmp_path):
+        path = str(tmp_path / "status.md")
+        writer = StatusWriter(file_path=path)
+        scored = [_make_scored(event_id="evt_alias", net_profit=2.50, roi_pct=5.0)]
+        writer.write_cycle(
+            cycle=1,
+            mode="DRY-RUN",
+            markets_scanned=1000,
+            scored_opps=scored,
+            event_questions={"evt_alias": "Wrong Event Title"},
+            market_questions={"tok_yes": "Actual market question?", "tok_no": "Actual market question?"},
+            total_opps_found=1,
+            total_trades_executed=0,
+            total_pnl=0.0,
+            current_exposure=0.0,
+            scan_only=True,
+        )
+        content = open(path).read()
+        assert "Actual market question?" in content
+        assert "Wrong Event Title" not in content
 
     def test_event_id_fallback_when_no_question(self, tmp_path):
         path = str(tmp_path / "status.md")

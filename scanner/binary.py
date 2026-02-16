@@ -123,8 +123,8 @@ def _check_buy_arb(
 
     # Edge-proportional slippage: wider edges tolerate more slippage
     edge_pct = ((1.0 - cost_per_set) / cost_per_set) * 100.0
-    yes_ceiling = slippage_ceiling(yes_ask.price, edge_pct, Side.BUY, slippage_fraction, max_slippage_pct)
-    no_ceiling = slippage_ceiling(no_ask.price, edge_pct, Side.BUY, slippage_fraction, max_slippage_pct)
+    yes_ceiling = slippage_ceiling(yes_ask.price, edge_pct, Side.BUY, slippage_fraction, max_slippage_pct, fee_pct=2.0)
+    no_ceiling = slippage_ceiling(no_ask.price, edge_pct, Side.BUY, slippage_fraction, max_slippage_pct, fee_pct=2.0)
     yes_depth = sweep_depth(yes_book, Side.BUY, max_price=yes_ceiling)
     no_depth = sweep_depth(no_book, Side.BUY, max_price=no_ceiling)
     max_sets = min(yes_depth, no_depth)
@@ -224,8 +224,8 @@ def _check_sell_arb(
 
     # Edge-proportional slippage: wider edges tolerate more slippage
     edge_pct = ((proceeds_per_set - 1.0) / 1.0) * 100.0
-    yes_floor = slippage_ceiling(yes_bid.price, edge_pct, Side.SELL, slippage_fraction, max_slippage_pct)
-    no_floor = slippage_ceiling(no_bid.price, edge_pct, Side.SELL, slippage_fraction, max_slippage_pct)
+    yes_floor = slippage_ceiling(yes_bid.price, edge_pct, Side.SELL, slippage_fraction, max_slippage_pct, fee_pct=2.0)
+    no_floor = slippage_ceiling(no_bid.price, edge_pct, Side.SELL, slippage_fraction, max_slippage_pct, fee_pct=2.0)
     yes_depth = sweep_depth(yes_book, Side.SELL, max_price=yes_floor)
     no_depth = sweep_depth(no_book, Side.SELL, max_price=no_floor)
     max_sets = min(yes_depth, no_depth)

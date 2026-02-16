@@ -96,7 +96,7 @@ class TestArbTrackerNew:
         # First-seen without persistence
         opp2 = _make_opp(event_id="e2")
         tracker.record(0, [opp2])
-        assert tracker.confidence("e2", has_inventory=True) == 0.3  # First seen, low depth
+        assert tracker.confidence("e2", has_inventory=True) == 0.1  # First seen, low depth
 
     def test_unknown_event(self):
         """Unknown event should have zero confidence."""
@@ -112,11 +112,11 @@ class TestArbTrackerNew:
 
         # Record e1 in cycle 0
         tracker.record(0, [opp1])
-        assert tracker.confidence("e1") == 0.3  # First seen
+        assert tracker.confidence("e1") == 0.1  # First seen
 
         # Record e2 in cycle 2 (skip cycle 1)
         tracker.record(2, [opp2])
-        assert tracker.confidence("e2") == 0.3  # First seen
+        assert tracker.confidence("e2") == 0.1  # First seen
 
     def test_consecutive_cycles_full_confidence(self):
         """Consecutive cycles give full confidence."""
@@ -193,7 +193,7 @@ class TestArbTrackerNew:
         tracker.record(0, [opp1])
 
         # With inventory, first-seen confidence
-        assert tracker.confidence("e1", has_inventory=True) == 0.3
+        assert tracker.confidence("e1", has_inventory=True) == 0.1
 
         # Without inventory, very low confidence
         assert tracker.confidence("e1", has_inventory=False) == 0.1
@@ -205,12 +205,12 @@ class TestArbTrackerNew:
 
         tracker.record(0, [opp1])
 
-        # Low depth ratio gives 0.3
-        assert tracker.confidence("e1", depth_ratio=1.0, has_inventory=True) == 0.3
+        # Low depth ratio gives 0.1
+        assert tracker.confidence("e1", depth_ratio=1.0, has_inventory=True) == 0.1
 
-        # High depth ratio gives 0.7
-        assert tracker.confidence("e1", depth_ratio=2.0, has_inventory=True) == 0.7
-        assert tracker.confidence("e1", depth_ratio=5.0, has_inventory=True) == 0.7
+        # High depth ratio gives 0.3
+        assert tracker.confidence("e1", depth_ratio=2.0, has_inventory=True) == 0.3
+        assert tracker.confidence("e1", depth_ratio=5.0, has_inventory=True) == 0.3
 
     def test_duplicate_cycle_numbers_not_added(self):
         """Recording same cycle number twice should not duplicate."""
@@ -253,3 +253,62 @@ class TestArbTrackerNew:
 
         # Without inventory, low confidence (even though persistent)
         assert tracker.confidence("e1", has_inventory=False) == 0.1
+
+
+class TestFailureTracking:
+    def test_record_failure_increments(self):
+        """Each failure call increments the count."""
+        tracker = _make_tracker()
+        tracker.record_failure("e1")
+        assert tracker._failures["e1"] == 1
+        tracker.record_failure("e1")
+        assert tracker._failures["e1"] == 2
+
+    def test_single_failure_reduces_persistent_confidence(self):
+        """One failure reduces persistent confidence by 20%."""
+        tracker = _make_tracker()
+        opp = _make_opp(event_id="e1")
+        for i in range(3):
+            tracker.record(i, [opp])
+        # Persistent = 1.0, one failure → 1.0 * (1 - 0.2) = 0.8
+        tracker.record_failure("e1")
+        assert abs(tracker.confidence("e1") - 0.8) < 1e-9
+
+    def test_three_failures_drops_60_percent(self):
+        """Three failures → confidence drops 60%."""
+        tracker = _make_tracker()
+        opp = _make_opp(event_id="e1")
+        for i in range(3):
+            tracker.record(i, [opp])
+        for _ in range(3):
+            tracker.record_failure("e1")
+        # 1.0 * (1 - 3 * 0.2) = 1.0 * 0.4 = 0.4
+        assert abs(tracker.confidence("e1") - 0.4) < 1e-9
+
+    def test_failures_floor_at_005(self):
+        """Confidence never goes below 0.05 regardless of failures."""
+        tracker = _make_tracker()
+        opp = _make_opp(event_id="e1")
+        for i in range(3):
+            tracker.record(i, [opp])
+        for _ in range(10):
+            tracker.record_failure("e1")
+        # Should floor at 0.05
+        assert abs(tracker.confidence("e1") - 0.05) < 1e-9
+
+    def test_failure_penalty_on_first_seen(self):
+        """Failures also penalize first-seen confidence."""
+        tracker = _make_tracker()
+        opp = _make_opp(event_id="e1")
+        tracker.record(0, [opp])
+        # First-seen thin = 0.1, one failure → 0.1 * 0.8 = 0.08
+        tracker.record_failure("e1")
+        assert abs(tracker.confidence("e1", depth_ratio=1.0) - 0.08) < 1e-9
+
+    def test_no_failures_no_penalty(self):
+        """Zero failures means no penalty applied."""
+        tracker = _make_tracker()
+        opp = _make_opp(event_id="e1")
+        for i in range(3):
+            tracker.record(i, [opp])
+        assert tracker.confidence("e1") == 1.0

@@ -187,7 +187,54 @@ class TestBoundedMemory:
             t.record_cycle(i, 10, opps)
 
         s = t.summary()
-        # Should reflect actual cycles run, not capped opportunity count
+        # Should reflect actual cycles run and full-session totals
         assert s["total_cycles"] == 99  # 0-99 = 100 cycles
-        # But opportunities_found should be capped or close to cap
-        assert s["opportunities_found"] <= 50
+        assert s["opportunities_found"] == 100
+        # Retained in-memory list is still bounded
+        assert len(t.opportunities) <= 50
+
+
+class TestActionabilitySplit:
+    def test_maker_not_counted_as_taker_buy_actionable(self):
+        t = ScanTracker()
+        maker = _make_opp(opp_type=OpportunityType.MAKER_REBALANCE, net_profit=4.0)
+        taker = _make_opp(opp_type=OpportunityType.BINARY_REBALANCE, net_profit=3.0)
+        t.record_cycle(
+            1,
+            10,
+            [maker, taker],
+            actionable_now=[taker],
+            maker_candidates=[maker],
+        )
+        s = t.summary()
+        assert s["buy_arb_count"] == 1
+        assert s["actionable_now_count"] == 1
+        assert s["maker_candidate_count"] == 1
+
+
+class TestLaneSplit:
+    def test_explicit_lane_tracking(self):
+        t = ScanTracker()
+        exe = _make_opp(opp_type=OpportunityType.BINARY_REBALANCE, net_profit=3.0)
+        research = _make_opp(opp_type=OpportunityType.CORRELATION_ARB, net_profit=7.0)
+        t.record_cycle(
+            1,
+            25,
+            [exe, research],
+            executable_opps=[exe],
+            research_opps=[research],
+        )
+        s = t.summary()
+        assert s["executable_opp_count"] == 1
+        assert s["research_opp_count"] == 1
+        assert s["executable_opp_profit_usd"] == 3.0
+        assert s["research_opp_profit_usd"] == 7.0
+
+    def test_lane_fallback_classification_without_explicit_lists(self):
+        t = ScanTracker()
+        exe = _make_opp(opp_type=OpportunityType.BINARY_REBALANCE, net_profit=2.0)
+        research = _make_opp(opp_type=OpportunityType.RESOLUTION_SNIPE, net_profit=4.0)
+        t.record_cycle(1, 10, [exe, research])
+        s = t.summary()
+        assert s["executable_opp_count"] == 1
+        assert s["research_opp_count"] == 1

@@ -26,6 +26,8 @@ class PriceUpdate:
     token_id: str
     price: float
     timestamp: float
+    side: str = ""
+    size: float = 0.0
 
 
 @dataclass
@@ -190,8 +192,14 @@ class WSManager:
             if event_type == "price_change":
                 try:
                     price = float(event["price"])
+                    size = float(event.get("size", 0.0))
+                    side = str(event.get("side", "")).upper()
                     update = PriceUpdate(
-                        token_id=asset_id, price=price, timestamp=now
+                        token_id=asset_id,
+                        price=price,
+                        timestamp=now,
+                        side=side,
+                        size=size,
                     )
                     try:
                         self.price_queue.put_nowait(update)

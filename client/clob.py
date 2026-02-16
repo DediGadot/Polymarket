@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import logging
 import time
+import threading
+from collections import deque
 
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import (
@@ -23,8 +25,13 @@ from scanner.validation import validate_price, validate_size
 logger = logging.getLogger(__name__)
 
 # Retry config for flaky CLOB API (HTTP/2 connection resets, SSL errors)
-_MAX_RETRIES = 3
+_MAX_RETRIES = 5
 _RETRY_BACKOFF_SEC = 1.0
+
+# CLOB read endpoint limit is 50 requests / 10s. Keep headroom for occasional
+# non-book calls by targeting 25 / 10s.
+_READ_RATE_LIMIT_CALLS = 25
+_READ_RATE_LIMIT_WINDOW_SEC = 10.0
 
 # Patch py_clob_client's shared httpx client:
 #   - Disable HTTP/2: the CLOB server sends GOAWAY frames that crash the shared
@@ -33,6 +40,40 @@ _RETRY_BACKOFF_SEC = 1.0
 import httpx as _httpx
 from py_clob_client.http_helpers import helpers as _clob_helpers
 _clob_helpers._http_client = _httpx.Client(http2=False, timeout=15.0)
+
+
+class _SlidingWindowRateLimiter:
+    """Thread-safe sliding-window limiter for read endpoints."""
+
+    def __init__(self, max_calls: int, window_sec: float) -> None:
+        self._max_calls = max_calls
+        self._window_sec = window_sec
+        self._calls: deque[float] = deque()
+        self._lock = threading.Lock()
+
+    def acquire(self, cost: int = 1) -> None:
+        """Block until a new call is allowed under the sliding-window budget."""
+        if cost <= 0:
+            return
+        while True:
+            wait_for = 0.0
+            with self._lock:
+                now = time.time()
+                while self._calls and (now - self._calls[0]) >= self._window_sec:
+                    self._calls.popleft()
+                if len(self._calls) + cost <= self._max_calls:
+                    for _ in range(cost):
+                        self._calls.append(now)
+                    return
+                oldest = self._calls[0]
+                wait_for = max(0.01, self._window_sec - (now - oldest))
+            time.sleep(wait_for)
+
+
+_READ_RATE_LIMITER = _SlidingWindowRateLimiter(
+    max_calls=_READ_RATE_LIMIT_CALLS,
+    window_sec=_READ_RATE_LIMIT_WINDOW_SEC,
+)
 
 
 def _sort_book_levels(
@@ -77,24 +118,32 @@ def _retry_api_call(fn, *args, max_retries: int = _MAX_RETRIES, **kwargs):
         except Exception as exc:
             last_exc = exc
             err_str = str(exc)
-            # Only retry on connection-level errors (status_code=None), not 4xx/5xx
+            err_lower = err_str.lower()
+            # Retry on connection-level errors and explicit rate-limit responses.
             is_connection_error = "Request exception" in err_str or "status_code=None" in err_str
-            if not is_connection_error or attempt == max_retries - 1:
+            is_rate_limited = "429" in err_str or "rate limit" in err_lower or "too many requests" in err_lower
+            if (not is_connection_error and not is_rate_limited) or attempt == max_retries - 1:
                 raise
             wait = _RETRY_BACKOFF_SEC * (2 ** attempt)
-            logger.debug("CLOB API retry %d/%d after %.1fs: %s", attempt + 1, max_retries, wait, exc)
+            if is_rate_limited:
+                wait = max(2.0, wait)
+            logger.debug(
+                "CLOB API retry %d/%d after %.1fs (rate_limited=%s): %s",
+                attempt + 1, max_retries, wait, is_rate_limited, exc,
+            )
             time.sleep(wait)
     raise last_exc  # unreachable, but satisfies type checker
 
 
 def get_orderbook(client: ClobClient, token_id: str) -> OrderBook:
     """Fetch full orderbook for a token and convert to our OrderBook model."""
+    _READ_RATE_LIMITER.acquire()
     raw = _retry_api_call(client.get_order_book, token_id)
     bids, asks = _sort_book_levels(raw.bids, raw.asks)
     return OrderBook(token_id=token_id, bids=bids, asks=asks)
 
 
-BOOK_BATCH_SIZE = 50  # Max token IDs per /books request to avoid payload limit
+BOOK_BATCH_SIZE = 20  # Keep chunks small to stay within CLOB read limits
 
 
 def get_orderbooks(client: ClobClient, token_ids: list[str]) -> dict[str, OrderBook]:
@@ -103,6 +152,7 @@ def get_orderbooks(client: ClobClient, token_ids: list[str]) -> dict[str, OrderB
     for i in range(0, len(token_ids), BOOK_BATCH_SIZE):
         chunk = token_ids[i:i + BOOK_BATCH_SIZE]
         params = [BookParams(token_id=tid) for tid in chunk]
+        _READ_RATE_LIMITER.acquire()
         raws = _retry_api_call(client.get_order_books, params)
         for raw in raws:
             tid = raw.asset_id
@@ -132,6 +182,7 @@ def get_orderbooks_parallel(
 
     def _fetch_chunk(chunk: list[str]) -> dict[str, OrderBook]:
         params = [BookParams(token_id=tid) for tid in chunk]
+        _READ_RATE_LIMITER.acquire()
         raws = _retry_api_call(client.get_order_books, params)
         result: dict[str, OrderBook] = {}
         for raw in raws:
@@ -162,6 +213,7 @@ def create_limit_order(
     size: float,
     neg_risk: bool = False,
     tick_size: str = "0.01",
+    expiration: int = 0,
 ) -> object:
     """Create and sign a limit order. Returns a SignedOrder ready to post."""
     args = OrderArgs(
@@ -169,6 +221,7 @@ def create_limit_order(
         price=price,
         size=size,
         side=BUY if side == Side.BUY else SELL,
+        expiration=expiration,
     )
     options = PartialCreateOrderOptions(
         tick_size=tick_size,
@@ -209,7 +262,7 @@ def post_order(
 
 def post_orders(
     client: ClobClient,
-    signed_orders: list[tuple[object, OrderType]],
+    signed_orders: list[tuple[object, OrderType] | tuple[object, OrderType, bool]],
 ) -> list:
     """
     Post multiple signed orders in a single batch (max 15).
@@ -217,10 +270,14 @@ def post_orders(
     """
     from py_clob_client.clob_types import PostOrdersArgs
 
-    args = [
-        PostOrdersArgs(order=so, orderType=ot)
-        for so, ot in signed_orders
-    ]
+    args = []
+    for item in signed_orders:
+        if len(item) == 2:
+            so, ot = item
+            post_only = False
+        else:
+            so, ot, post_only = item
+        args.append(PostOrdersArgs(order=so, orderType=ot, postOnly=post_only))
     return client.post_orders(args)
 
 

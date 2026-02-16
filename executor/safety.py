@@ -9,18 +9,7 @@ import time
 from dataclasses import dataclass, field
 
 from client.gas import GasOracle
-from scanner.depth import sweep_depth, sweep_cost
-from scanner.models import Opportunity, OpportunityType, Side, OrderBook
-from client.platform import PlatformClient
-
-logger = logging.getLogger(__name__)
-
-import logging
-import time
-from dataclasses import dataclass, field
-
-from client.gas import GasOracle
-from scanner.depth import sweep_depth, sweep_cost
+from scanner.depth import sweep_depth, sweep_cost, worst_fill_price
 from scanner.models import Opportunity, OpportunityType, Side, OrderBook
 from client.platform import PlatformClient
 
@@ -183,10 +172,12 @@ def verify_depth(
     opportunity: Opportunity,
     books: dict[str, OrderBook],
     max_slippage: float = 0.005,
+    depth_margin: float = 1.2,
 ) -> None:
     """
     Verify the orderbook has enough depth across all levels to fill our intended size.
     Uses sweep_depth() and sweep_cost() for multi-level analysis.
+    Requires available_depth >= leg.size * depth_margin (20% cushion for competing fills).
     Raises SafetyCheckFailed if depth is insufficient or fill cost exceeds slippage tolerance.
     """
     for leg in opportunity.legs:
@@ -194,15 +185,17 @@ def verify_depth(
         if not book:
             raise SafetyCheckFailed(f"No orderbook for {leg.token_id}")
 
+        required_depth = leg.size * depth_margin
+
         if leg.side == Side.BUY:
             if not book.best_ask:
                 raise SafetyCheckFailed(f"No ask for {leg.token_id}")
             # Check depth within slippage tolerance of opportunity price
             price_ceiling = leg.price * (1.0 + max_slippage)
             available = sweep_depth(book, Side.BUY, max_price=price_ceiling)
-            if available < leg.size:
+            if available < required_depth:
                 raise SafetyCheckFailed(
-                    f"Insufficient ask depth for {leg.token_id}: need {leg.size:.1f} have {available:.1f}"
+                    f"Insufficient ask depth for {leg.token_id}: need {required_depth:.1f} (size={leg.size:.1f} x {depth_margin:.1f}) have {available:.1f}"
                 )
             # Verify actual fill cost doesn't exceed slippage tolerance
             try:
@@ -220,9 +213,9 @@ def verify_depth(
             # Check depth within slippage tolerance
             price_floor = leg.price * (1.0 - max_slippage)
             available = sweep_depth(book, Side.SELL, max_price=price_floor)
-            if available < leg.size:
+            if available < required_depth:
                 raise SafetyCheckFailed(
-                    f"Insufficient bid depth for {leg.token_id}: need {leg.size:.1f} have {available:.1f}"
+                    f"Insufficient bid depth for {leg.token_id}: need {required_depth:.1f} (size={leg.size:.1f} x {depth_margin:.1f}) have {available:.1f}"
                 )
             # Verify actual fill proceeds don't fall below slippage tolerance
             try:
@@ -273,25 +266,25 @@ def verify_edge_intact(
     below min_edge_ratio of the original estimate, abort.
     Raises SafetyCheckFailed if edge has deteriorated too much.
 
-    Uses VWAP (sweep_cost) instead of top-of-book for realistic cost estimation.
+    Uses worst_fill_price instead of VWAP for conservative cost estimation.
+    Orders execute at the worst level needed, not the average — this ensures
+    the edge check aligns with actual execution pricing.
     """
     if opportunity.type in (
         OpportunityType.BINARY_REBALANCE,
         OpportunityType.NEGRISK_REBALANCE,
         OpportunityType.SPIKE_LAG,
     ):
-        # For buy-all arbs: recompute cost using VWAP (sweep_cost for 1 set)
+        # For buy-all arbs: recompute cost using worst-fill price (1 set)
         fresh_cost = 0.0
         for leg in opportunity.legs:
             book = books.get(leg.token_id)
             if not book:
                 raise SafetyCheckFailed(f"No fresh book for {leg.token_id}")
-            try:
-                # Use sweep_cost for VWAP-based cost (1 set = 1.0 shares)
-                leg_cost = sweep_cost(book, leg.side, 1.0)
-                fresh_cost += leg_cost
-            except ValueError as e:
-                raise SafetyCheckFailed(f"Insufficient depth for {leg.token_id}: {e}")
+            worst = worst_fill_price(book, leg.side, 1.0)
+            if worst is None:
+                raise SafetyCheckFailed(f"Insufficient depth for {leg.token_id}")
+            fresh_cost += worst
 
         if opportunity.legs[0].side == Side.BUY:
             fresh_profit_per_set = 1.0 - fresh_cost
@@ -316,25 +309,22 @@ def verify_edge_intact(
         return
 
     if opportunity.type == OpportunityType.CROSS_PLATFORM_ARB:
-        # Reconstruct fresh synthetic basket cost using VWAP:
-        # BUY leg contributes ask; SELL leg contributes (1 - bid) of complement.
+        # Reconstruct fresh synthetic basket cost using worst-fill prices.
         fresh_cost = 0.0
         for leg in opportunity.legs:
             book = books.get(leg.token_id)
             if not book:
                 raise SafetyCheckFailed(f"No fresh book for {leg.token_id}")
-            try:
-                if leg.side == Side.BUY:
-                    # Use VWAP cost for 1 set
-                    leg_cost = sweep_cost(book, Side.BUY, 1.0)
-                    fresh_cost += leg_cost
-                else:
-                    # For SELL leg: compute VWAP proceeds from (1 - bid) formula
-                    # We need to sweep the book and apply (1 - price) transformation
-                    leg_proceeds = sweep_cost(book, Side.SELL, 1.0)
-                    fresh_cost += 1.0 - leg_proceeds
-            except ValueError as e:
-                raise SafetyCheckFailed(f"Insufficient depth for {leg.token_id}: {e}")
+            if leg.side == Side.BUY:
+                worst = worst_fill_price(book, Side.BUY, 1.0)
+                if worst is None:
+                    raise SafetyCheckFailed(f"Insufficient depth for {leg.token_id}")
+                fresh_cost += worst
+            else:
+                worst = worst_fill_price(book, Side.SELL, 1.0)
+                if worst is None:
+                    raise SafetyCheckFailed(f"Insufficient depth for {leg.token_id}")
+                fresh_cost += 1.0 - worst
 
         fresh_profit_per_set = 1.0 - fresh_cost
         if fresh_profit_per_set <= 0:
@@ -363,20 +353,16 @@ def verify_edge_intact(
         if not book:
             raise SafetyCheckFailed(f"No fresh book for {leg.token_id}")
 
-        try:
-            # Use VWAP instead of top-of-book for adverse move calculation
-            fresh_vwap_cost = sweep_cost(book, leg.side, 1.0)
-            # VWAP gives us total cost for 1 set, which equals the average price
-            fresh_vwap = fresh_vwap_cost  # For 1 set, cost = average price
-        except ValueError as e:
-            raise SafetyCheckFailed(f"Insufficient depth for {leg.token_id}: {e}")
+        worst = worst_fill_price(book, leg.side, 1.0)
+        if worst is None:
+            raise SafetyCheckFailed(f"Insufficient depth for {leg.token_id}")
 
         if leg.side == Side.BUY:
-            # For BUY: adverse move is how much the VWAP ask increased
-            adverse_move = max(0.0, fresh_vwap - leg.price)
+            # For BUY: adverse move is how much the worst ask increased
+            adverse_move = max(0.0, worst - leg.price)
         else:
-            # For SELL: adverse move is how much the VWAP bid decreased
-            adverse_move = max(0.0, leg.price - fresh_vwap)
+            # For SELL: adverse move is how much the worst bid decreased
+            adverse_move = max(0.0, leg.price - worst)
 
         fresh_profit_per_set = opportunity.expected_profit_per_set - adverse_move
         if fresh_profit_per_set <= 0:
@@ -396,10 +382,27 @@ def verify_edge_intact(
             )
 
 
+def verify_min_confidence(
+    confidence: float,
+    min_confidence: float,
+    event_id: str = "",
+) -> None:
+    """
+    Reject opportunities with low confidence scores. First-seen arbs on
+    thin books are likely phantoms; require at least min_confidence to execute.
+    Raises SafetyCheckFailed if confidence is below the gate.
+    """
+    if confidence < min_confidence:
+        raise SafetyCheckFailed(
+            f"Low confidence for {event_id}: {confidence:.2f} < {min_confidence:.2f}"
+        )
+
+
 def verify_inventory(
     position_tracker: PositionTracker,
     opportunity: Opportunity,
     size: float,
+    platform_filter: set[str] | None = None,
 ) -> None:
     """
     Verify we hold enough tokens for every SELL leg in the opportunity.
@@ -409,6 +412,10 @@ def verify_inventory(
     for leg in opportunity.legs:
         if leg.side != Side.SELL:
             continue
+        if platform_filter is not None:
+            platform = (leg.platform or "polymarket").lower()
+            if platform not in platform_filter:
+                continue
         held = position_tracker.get_position(leg.token_id)
         if held < size:
             raise SafetyCheckFailed(

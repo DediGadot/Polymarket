@@ -11,14 +11,16 @@ Generalized for N platforms: iterates each PlatformMatch within each MatchedEven
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
 from client.gas import GasOracle
 from scanner.depth import effective_price, slippage_ceiling, sweep_depth, worst_fill_price
 from scanner.fees import MarketFeeModel
 from scanner.platform_fees import PlatformFeeModel
-from scanner.matching import MatchedEvent, match_contracts, filter_by_confidence
+from scanner.matching import MatchedEvent, PlatformMatch, match_contracts, filter_by_confidence
 from scanner.models import (
     LegOrder,
+    Market,
     Opportunity,
     OpportunityType,
     OrderBook,
@@ -42,6 +44,7 @@ def scan_cross_platform(
     min_confidence: float = 0.90,
     # Contract-level matching: external markets for settlement validation
     platform_markets: dict[str, list] | None = None,
+    should_stop: Callable[[], bool] | None = None,
     # Backward-compat: accept old kalshi-specific params
     kalshi_books: dict[str, OrderBook] | None = None,
     kalshi_fee_model: object | None = None,
@@ -77,98 +80,154 @@ def scan_cross_platform(
     opportunities: list[Opportunity] = []
 
     for match in matched_events:
+        if should_stop and should_stop():
+            break
         if len(match.pm_markets) == 0:
             continue
 
-        pm_market = match.pm_markets[0]
-        pm_yes_book = pm_books.get(pm_market.yes_token_id)
-        pm_no_book = pm_books.get(pm_market.no_token_id)
-
-        if not pm_yes_book or not pm_no_book:
-            continue
-
-        for pm in match.platform_matches:
-            if pm.confidence < min_confidence:
+        for platform_match in match.platform_matches:
+            if should_stop and should_stop():
+                break
+            if platform_match.confidence < min_confidence:
                 logger.debug(
                     "Skipping match %s -> %s %s (confidence=%.2f < %.2f)",
-                    match.pm_event_id, pm.platform, pm.event_ticker,
-                    pm.confidence, min_confidence,
+                    match.pm_event_id, platform_match.platform, platform_match.event_ticker,
+                    platform_match.confidence, min_confidence,
                 )
                 continue
 
-            if not pm.tickers:
+            if not platform_match.tickers:
                 continue
 
-            ext_ticker = pm.tickers[0]
-            ext_books = platform_books.get(pm.platform, {})
-            ext_book = ext_books.get(ext_ticker)
-            ext_fee_model = platform_fee_models.get(pm.platform)
+            ext_books = platform_books.get(platform_match.platform, {})
+            ext_fee_model = platform_fee_models.get(platform_match.platform)
+            contract_pairs = _contract_pairs_for_event(
+                match=match,
+                platform_match=platform_match,
+                ext_books=ext_books,
+                platform_markets=platform_markets,
+                min_confidence=min_confidence,
+            )
 
-            if not ext_book:
-                continue
+            for pm_market, ext_ticker in contract_pairs:
+                if should_stop and should_stop():
+                    break
+                pm_yes_book = pm_books.get(pm_market.yes_token_id)
+                pm_no_book = pm_books.get(pm_market.no_token_id)
+                ext_book = ext_books.get(ext_ticker)
 
-            # Contract-level matching: fetch external markets and validate
-            # This requires external platform markets to perform settlement equivalence check
-            # Skip if we can't do proper contract-level validation
-            ext_markets = []  # Would need to be passed in from caller
-            if ext_markets:
-                # Get contract-level matches and filter by confidence
-                contract_matches = match_contracts(match.pm_markets, ext_markets)
-                contract_matches = filter_by_confidence(contract_matches, min_confidence=min_confidence)
-
-                if not contract_matches:
-                    logger.info(
-                        "Skipping cross-platform arb %s -> %s %s (no valid contract matches)",
-                        match.pm_event_id, pm.platform, pm.event_ticker,
-                    )
+                if not pm_yes_book or not pm_no_book or not ext_book:
                     continue
 
-            # Direction 1: Buy PM YES + Buy EXT NO (= sell EXT YES)
-            opp = _check_cross_platform_arb(
-                event_id=match.pm_event_id,
-                pm_book=pm_yes_book,
-                pm_side=Side.BUY,
-                pm_token_id=pm_market.yes_token_id,
-                ext_book=ext_book,
-                ext_side=Side.SELL,
-                ext_ticker=ext_ticker,
-                platform=pm.platform,
-                min_profit_usd=min_profit_usd,
-                min_roi_pct=min_roi_pct,
-                gas_per_order=gas_per_order,
-                gas_oracle=gas_oracle,
-                gas_price_gwei=gas_price_gwei,
-                pm_market=pm_market,
-                pm_fee_model=pm_fee_model,
-                ext_fee_model=ext_fee_model,
-            )
-            if opp:
-                opportunities.append(opp)
+                # Direction 1: Buy PM YES + Buy EXT NO (= sell EXT YES)
+                opp = _check_cross_platform_arb(
+                    event_id=match.pm_event_id,
+                    pm_book=pm_yes_book,
+                    pm_side=Side.BUY,
+                    pm_token_id=pm_market.yes_token_id,
+                    ext_book=ext_book,
+                    ext_side=Side.SELL,
+                    ext_ticker=ext_ticker,
+                    platform=platform_match.platform,
+                    min_profit_usd=min_profit_usd,
+                    min_roi_pct=min_roi_pct,
+                    gas_per_order=gas_per_order,
+                    gas_oracle=gas_oracle,
+                    gas_price_gwei=gas_price_gwei,
+                    pm_market=pm_market,
+                    pm_fee_model=pm_fee_model,
+                    ext_fee_model=ext_fee_model,
+                )
+                if opp:
+                    opportunities.append(opp)
 
-            # Direction 2: Buy PM NO + Buy EXT YES
-            opp = _check_cross_platform_arb(
-                event_id=match.pm_event_id,
-                pm_book=pm_no_book,
-                pm_side=Side.BUY,
-                pm_token_id=pm_market.no_token_id,
-                ext_book=ext_book,
-                ext_side=Side.BUY,
-                ext_ticker=ext_ticker,
-                platform=pm.platform,
-                min_profit_usd=min_profit_usd,
-                min_roi_pct=min_roi_pct,
-                gas_per_order=gas_per_order,
-                gas_oracle=gas_oracle,
-                gas_price_gwei=gas_price_gwei,
-                pm_market=pm_market,
-                pm_fee_model=pm_fee_model,
-                ext_fee_model=ext_fee_model,
-            )
-            if opp:
-                opportunities.append(opp)
+                # Direction 2: Buy PM NO + Buy EXT YES
+                opp = _check_cross_platform_arb(
+                    event_id=match.pm_event_id,
+                    pm_book=pm_no_book,
+                    pm_side=Side.BUY,
+                    pm_token_id=pm_market.no_token_id,
+                    ext_book=ext_book,
+                    ext_side=Side.BUY,
+                    ext_ticker=ext_ticker,
+                    platform=platform_match.platform,
+                    min_profit_usd=min_profit_usd,
+                    min_roi_pct=min_roi_pct,
+                    gas_per_order=gas_per_order,
+                    gas_oracle=gas_oracle,
+                    gas_price_gwei=gas_price_gwei,
+                    pm_market=pm_market,
+                    pm_fee_model=pm_fee_model,
+                    ext_fee_model=ext_fee_model,
+                )
+                if opp:
+                    opportunities.append(opp)
 
     opportunities.sort(key=lambda o: o.roi_pct, reverse=True)
     return opportunities
+
+
+def _contract_pairs_for_event(
+    match: MatchedEvent,
+    platform_match: PlatformMatch,
+    ext_books: dict[str, OrderBook],
+    platform_markets: dict[str, list] | None,
+    min_confidence: float,
+) -> list[tuple[Market, str]]:
+    """
+    Resolve PM/external contract pairs for a matched event.
+
+    Uses contract-level matching when external market metadata is available.
+    Falls back to single-contract legacy behavior for backward compatibility.
+    """
+    # Preferred path: contract-level matching with external market metadata.
+    if platform_markets is not None:
+        ext_market_pool = platform_markets.get(platform_match.platform, [])
+        if ext_market_pool:
+            allowed_tickers = set(platform_match.tickers)
+            ext_markets = [
+                m for m in ext_market_pool
+                if getattr(m, "ticker", None) in allowed_tickers
+                and (
+                    getattr(m, "event_ticker", None) == platform_match.event_ticker
+                    or len(match.pm_markets) == 1
+                )
+            ]
+
+            if ext_markets:
+                contract_matches = match_contracts(match.pm_markets, ext_markets)
+                contract_matches = filter_by_confidence(contract_matches, min_confidence=min_confidence)
+
+                pairs: list[tuple[Market, str]] = []
+                for cm in contract_matches:
+                    ticker = getattr(cm.ext_market, "ticker", "")
+                    if ticker and ticker in ext_books:
+                        pairs.append((cm.pm_market, ticker))
+
+                if pairs:
+                    return pairs
+
+                logger.info(
+                    "Skipping cross-platform arb %s -> %s %s (no valid contract matches)",
+                    match.pm_event_id, platform_match.platform, platform_match.event_ticker,
+                )
+                return []
+
+    # Legacy fallback: single PM market + first available external ticker.
+    if len(match.pm_markets) == 1:
+        for ticker in platform_match.tickers:
+            if ticker in ext_books:
+                return [(match.pm_markets[0], ticker)]
+        return []
+
+    # Ambiguous multi-market event without verified contract-level mapping.
+    logger.debug(
+        "Skipping ambiguous cross-platform match %s -> %s %s "
+        "(%d PM markets, %d external tickers, no contract map)",
+        match.pm_event_id, platform_match.platform, platform_match.event_ticker,
+        len(match.pm_markets), len(platform_match.tickers),
+    )
+    return []
 
 
 def _check_cross_platform_arb(
