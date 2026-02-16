@@ -130,6 +130,14 @@ class TestOpportunityEndpoint:
         assert resp.status_code == 200
         assert resp.json() == []
 
+    def test_get_unique_actionable(self, client: "TestClient", populated_store: tuple) -> None:
+        store, sid = populated_store
+        resp = client.get(f"/api/sessions/{sid}/opportunities/unique-actionable?limit=20")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert "signature_hash" in data[0]
+
 
 class TestSafetyEndpoint:
     def test_get_safety_empty(self, client: "TestClient", populated_store: tuple) -> None:

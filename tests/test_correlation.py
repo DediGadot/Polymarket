@@ -218,6 +218,17 @@ class TestParentChildDetection:
         assert all(leg.side == Side.BUY for leg in opp.legs)
         assert {leg.token_id for leg in opp.legs} == {"yes_e1", "no_e2"}
 
+    def test_parent_child_rejects_weak_semantic_entity_subset(self):
+        """
+        Shared entity token alone ("gta") should not imply parent/child.
+        """
+        parent = _make_event("e1", "Will GTA 6 cost $100+?")
+        child = _make_event("e2", "Will Jesus Christ return before GTA VI?")
+        scanner = CorrelationScanner()
+        rels = scanner.build_relationship_graph([parent, child])
+        pc = [r for r in rels if r.relation_type == RelationType.PARENT_CHILD]
+        assert pc == []
+
 
 # ---------------------------------------------------------------------------
 # Test temporal detection
@@ -291,6 +302,17 @@ class TestTemporalDetection:
         assert all(leg.side == Side.BUY for leg in opp.legs)
         assert {leg.token_id for leg in opp.legs} == {"no_e1", "yes_e2"}
 
+    def test_temporal_rejects_different_predicates_same_entity(self):
+        """
+        Same entity + different deadlines is insufficient when predicate differs.
+        """
+        e1 = _make_event("e1", "Will Trump resign by March 2026?")
+        e2 = _make_event("e2", "Will Trump win Ohio by June 2026?")
+        scanner = CorrelationScanner()
+        rels = scanner.build_relationship_graph([e1, e2])
+        temp = [r for r in rels if r.relation_type == RelationType.TEMPORAL]
+        assert temp == []
+
 
 # ---------------------------------------------------------------------------
 # Test complement detection
@@ -351,6 +373,21 @@ class TestNoFalsePositives:
         rels = scanner.build_relationship_graph([e1, e2])
         comp = [r for r in rels if r.relation_type == RelationType.COMPLEMENT]
         assert len(comp) == 0
+
+
+class TestGraphInvalidation:
+    def test_scan_rebuilds_graph_when_event_set_changes(self):
+        parent = _make_event("e1", "Will Trump win the presidency?")
+        child = _make_event("e2", "Will Trump win Ohio?")
+        scanner = CorrelationScanner()
+        scanner.build_relationship_graph([parent, child])
+        assert len(scanner._relations) == 1
+
+        unrelated_a = _make_event("u1", "Will Bitcoin hit $100K?")
+        unrelated_b = _make_event("u2", "Will Lakers win the NBA Finals?")
+        scanner.scan([unrelated_a, unrelated_b], books={})
+
+        assert len(scanner._relations) == 0
 
 
 # ---------------------------------------------------------------------------

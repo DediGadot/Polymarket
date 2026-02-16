@@ -59,7 +59,7 @@ from scanner.spike import SpikeDetector, scan_spike_opportunities
 from scanner.depth import sweep_depth
 from scanner.scorer import rank_opportunities, ScoringContext, ScoredOpportunity
 from scanner.strategy import StrategySelector, MarketState
-from scanner.models import Opportunity, OpportunityType, Side, TradeResult
+from scanner.models import Opportunity, OpportunityType, Side, TradeResult, is_market_stale
 from scanner.cross_platform import scan_cross_platform
 from scanner.filters import apply_pre_filters
 from scanner.kalshi_fees import KalshiFeeModel
@@ -305,11 +305,35 @@ def _print_scan_summary(tracker: ScanTracker) -> None:
     logger.info("  %-30s %s", "Session duration:", _format_duration(s["duration_sec"]))
     logger.info("  %-30s %s", "Markets scanned (cumulative):", f"{s['markets_scanned']:,}")
     logger.info("  %-30s %d", "Opportunities found:", s["opportunities_found"])
+    logger.info(
+        "  %-30s %d (%s %.1fs)",
+        "Unique opportunities:",
+        s.get("unique_opportunities_found", 0),
+        "dedup window",
+        float(s.get("dedup_window_sec", 0.0)),
+    )
+    logger.info(
+        "  %-30s %d",
+        "Repeated opportunities:",
+        s.get("repeated_opportunities_found", 0),
+    )
     logger.info("  %-30s %d", "Unique events:", s["unique_events"])
     if s["opportunities_found"] > 0:
         logger.info("  %-30s %.2f%%", "Best ROI:", s["best_roi_pct"])
         logger.info("  %-30s $%.2f", "Best profit:", s["best_profit_usd"])
         logger.info("  %-30s $%.2f", "Total theoretical profit:", s["total_theoretical_profit_usd"])
+        logger.info(
+            "    %-28s $%.2f (%d opps)",
+            "Unique opportunity profit:",
+            s.get("unique_opportunity_profit_usd", 0.0),
+            s.get("unique_opportunities_found", 0),
+        )
+        logger.info(
+            "    %-28s $%.2f (%d opps)",
+            "Repeated opportunity profit:",
+            s.get("repeated_opportunity_profit_usd", 0.0),
+            s.get("repeated_opportunities_found", 0),
+        )
         logger.info(
             "    %-28s $%.2f (%d opps)",
             "Executable lane:",
@@ -409,7 +433,7 @@ def main() -> None:
 
     # Initialize components
     pnl = PnLTracker()
-    tracker = ScanTracker()
+    tracker = ScanTracker(dedup_window_sec=cfg.scan_tracker_dedup_window_sec)
     breaker = CircuitBreaker(
         max_loss_per_hour=cfg.max_loss_per_hour,
         max_loss_per_day=cfg.max_loss_per_day,
@@ -774,6 +798,8 @@ def main() -> None:
     _cached_negrisk_events: list[Event] | None = None
     _cached_event_questions: dict[str, str] | None = None
     _cached_market_questions: dict[str, str] | None = None
+    _cached_incomplete_negrisk_groups: set[str] = set()
+    _cached_incomplete_negrisk_markets_ts: float = -1.0
 
     # Hoist invariant fetcher creation outside the loop.
     poly_rest_fetcher = partial(get_orderbooks_parallel, client, max_workers=cfg.book_fetch_workers)
@@ -934,6 +960,14 @@ def main() -> None:
                 if ws_updates > 0:
                     logger.debug("      WebSocket: drained %d updates into cache", ws_updates)
 
+            if shutdown_requested:
+                logger.info(
+                    "Cycle %d aborted: shutdown requested during fetch/update stages; skipping cycle accounting.",
+                    cycle,
+                )
+                collector.end_cycle()
+                break
+
             # Step 2: Scan for opportunities (strategy-tuned)
             scan_start = time.time()
             force_rescan_due = (time.time() - last_full_scan_at) >= cfg.ws_force_rescan_sec
@@ -1002,6 +1036,14 @@ def main() -> None:
                         book_service.stats["cached_tokens"],
                     )
 
+            if shutdown_requested:
+                logger.info(
+                    "Cycle %d aborted: shutdown requested during prefetch; skipping cycle accounting.",
+                    cycle,
+                )
+                collector.end_cycle()
+                break
+
             # Parallelize independent scanners (binary + negrisk) using ThreadPoolExecutor
             # These scanners have no dependencies on each other and can run concurrently
             binary_opps: list[Opportunity] = []
@@ -1031,27 +1073,58 @@ def main() -> None:
                 logger.debug("      Scanning %d negRisk events...", len(negrisk_events))
                 # Fetch expected market counts for event completeness validation (with caching).
                 # This prevents false arbs from incomplete outcome sets.
+                nonlocal _cached_incomplete_negrisk_markets_ts
                 event_market_counts = gamma_client.get_event_market_counts()
                 candidate_events = negrisk_events
                 if event_market_counts:
+                    if _cached_incomplete_negrisk_markets_ts != current_markets_ts:
+                        _cached_incomplete_negrisk_groups.clear()
+                        _cached_incomplete_negrisk_markets_ts = current_markets_ts
+
                     candidate_events = []
+                    skipped_unknown = 0
+                    skipped_cached_incomplete = 0
+                    skipped_new_incomplete = 0
+                    skipped_oversized = 0
                     for event in negrisk_events:
                         nrm_key = event.neg_risk_market_id or event.event_id
+                        if nrm_key in _cached_incomplete_negrisk_groups:
+                            skipped_cached_incomplete += 1
+                            continue
                         expected_total = event_market_counts.get(nrm_key, 0)
                         if expected_total == 0:
+                            skipped_unknown += 1
+                            continue
+                        active_count = sum(
+                            1
+                            for market in event.markets
+                            if market.active
+                            and not is_market_stale(market)
+                            and (cfg.min_volume_filter <= 0 or market.volume >= cfg.min_volume_filter)
+                        )
+                        missing = expected_total - active_count
+                        if missing > 2:
+                            _cached_incomplete_negrisk_groups.add(nrm_key)
+                            skipped_new_incomplete += 1
                             continue
                         if (
                             cfg.max_legs_per_opportunity > 0
                             and expected_total > cfg.max_legs_per_opportunity
                             and not cfg.negrisk_large_event_subset_enabled
                         ):
+                            skipped_oversized += 1
                             continue
                         candidate_events.append(event)
                     if len(candidate_events) < len(negrisk_events):
                         logger.debug(
-                            "      negRisk prefilter kept %d/%d events",
+                            "      negRisk prefilter kept %d/%d events (unknown=%d cached_incomplete=%d new_incomplete=%d oversized=%d cache_size=%d)",
                             len(candidate_events),
                             len(negrisk_events),
+                            skipped_unknown,
+                            skipped_cached_incomplete,
+                            skipped_new_incomplete,
+                            skipped_oversized,
+                            len(_cached_incomplete_negrisk_groups),
                         )
                 return scan_negrisk_events(
                     poly_book_fetcher, candidate_events,
@@ -1485,6 +1558,14 @@ def main() -> None:
                 )
                 logger.debug("      Scanner telemetry: %s", telemetry)
 
+            if shutdown_requested:
+                logger.info(
+                    "Cycle %d aborted: shutdown requested during scanner execution; skipping cycle accounting.",
+                    cycle,
+                )
+                collector.end_cycle()
+                break
+
             if cfg.correlation_max_opps_per_cycle > 0 and len(correlation_opps) > cfg.correlation_max_opps_per_cycle:
                 before = len(correlation_opps)
                 cap = cfg.correlation_max_opps_per_cycle
@@ -1610,7 +1691,11 @@ def main() -> None:
                 ofi_tracker=ofi_tracker,
             )
             # Composite scoring with real context data
-            scored_opps = rank_opportunities(all_opps, contexts=contexts)
+            scored_opps = rank_opportunities(
+                all_opps,
+                contexts=contexts,
+                risk_ranked_ev_enabled=cfg.risk_ranked_ev_enabled,
+            )
             if ml_scorer is not None:
                 scored_opps = _rerank_with_ml(
                     scored_opps=scored_opps,
@@ -1968,14 +2053,15 @@ def main() -> None:
         _sleep_remaining(cycle_start, cfg.scan_interval_sec, shutdown_requested)
 
     # Shutdown
+    completed_cycle = tracker.total_cycles if args.scan_only else cycle
     logger.info("")
     logger.info("Shutting down gracefully after %s (%d cycles)",
-                _format_duration(time.time() - session_start), cycle)
+                _format_duration(time.time() - session_start), completed_cycle)
 
     # Save all tracker state before exiting
     if checkpoint_mgr is not None:
-        saved = checkpoint_mgr.save_all(cycle_num=cycle)
-        logger.info("Checkpoint: saved %d tracker(s) on shutdown (cycle %d)", saved, cycle)
+        saved = checkpoint_mgr.save_all(cycle_num=completed_cycle)
+        logger.info("Checkpoint: saved %d tracker(s) on shutdown (cycle %d)", saved, completed_cycle)
         checkpoint_mgr.close()
 
     if kalshi_market_cache is not None:

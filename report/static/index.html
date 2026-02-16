@@ -198,6 +198,7 @@ tr:hover{background:rgba(88,166,255,.03)}
     <div class="quick-links">
       <button onclick="jumpToSection('funnel')">Funnel</button>
       <button onclick="jumpToSection('opps')">Opportunities</button>
+      <button onclick="jumpToSection('unique')">Unique</button>
       <button onclick="jumpToSection('risk')">Risk</button>
       <button onclick="jumpToSection('readiness')">Readiness</button>
       <button onclick="jumpToSection('untapped')">Untapped</button>
@@ -224,6 +225,14 @@ tr:hover{background:rgba(88,166,255,.03)}
   <div class="section-header" onclick="toggleSection('opps')"><h2>Opportunity Landscape <span class="tip" data-tip="Bubble size and clustering reveal whether edge quality is broad or concentrated in a few events.">?</span><span class="section-subtitle">Every detected edge plotted by expected profit and ROI</span></h2><span class="arrow">&#9660;</span></div>
   <div class="section-body" id="body-opps">
     <div class="chart-row"><div class="chart-container" id="chart-scatter"></div><div class="chart-container" id="chart-treemap"></div></div>
+  </div>
+</div>
+
+<!-- C2: Top Unique Actionable -->
+<div class="section" id="sec-unique">
+  <div class="section-header" onclick="toggleSection('unique')"><h2>Top Unique Actionable <span class="tip" data-tip="Deduplicated actionable candidates keyed by fingerprint (opp type + event + token/side legs).">?</span><span class="section-subtitle">Best non-duplicate opportunities for immediate action</span></h2><span class="arrow">&#9660;</span></div>
+  <div class="section-body" id="body-unique">
+    <div id="unique-actionable-wrap" style="max-height:360px;overflow-y:auto"></div>
   </div>
 </div>
 
@@ -463,11 +472,12 @@ async function loadSession(id){
   currentSession=id;
   syncSessionInUrl(id);
   // Load all data in parallel
-  const [session,cycles,funnel,opps,safety,strategy,crossPlatform,trades,pnl,scanners,readiness,untapped]=await Promise.all([
+  const [session,cycles,funnel,opps,uniqueActionable,safety,strategy,crossPlatform,trades,pnl,scanners,readiness,untapped]=await Promise.all([
     api(`/api/sessions/${id}`),
     api(`/api/sessions/${id}/cycles`),
     api(`/api/sessions/${id}/funnel`),
     api(`/api/sessions/${id}/opportunities?limit=200`),
+    api(`/api/sessions/${id}/opportunities/unique-actionable?limit=100`),
     api(`/api/sessions/${id}/safety`),
     api(`/api/sessions/${id}/strategy`),
     api(`/api/sessions/${id}/cross-platform`),
@@ -481,6 +491,7 @@ async function loadSession(id){
   renderHealthBanner(session,cycles,readiness,strategy);
   renderFunnel(funnel,safety);
   renderOpportunityLandscape(opps);
+  renderUniqueActionable(uniqueActionable);
   renderScoreDecomposition(opps);
   renderStrategyTimeline(strategy);
   renderCrossPlatform(crossPlatform);
@@ -758,6 +769,25 @@ function renderOpportunityLandscape(opps){
     });
   });
   Plotly.react('chart-treemap',[{type:'treemap',labels:tLabels,parents:tParents,values:tValues,marker:{colors:tColors},textinfo:'label+value',hovertemplate:'%{label}<br>$%{value:.2f}<extra></extra>'}],{...plotLayout,title:'Edge Concentration (by profit)'},plotConfig);
+}
+
+// ── Top Unique Actionable ──
+function renderUniqueActionable(rows){
+  const wrap=document.getElementById('unique-actionable-wrap');
+  if(!wrap)return;
+  if(!rows||!rows.length){
+    wrap.innerHTML='<div class="empty-state">No unique actionable opportunities for this session.</div>';
+    return;
+  }
+  let html='<table><thead><tr><th>#</th><th>Type</th><th>Event</th><th>Profit</th><th>ROI</th><th>Score</th><th>Fill</th><th>Persist</th><th>Dups</th><th>Fingerprint</th></tr></thead><tbody>';
+  rows.forEach((r,i)=>{
+    const title=(r.event_title&&r.event_title.trim())?r.event_title:r.event_id;
+    const shortEvent=title.length>48?`${title.slice(0,47)}…`:title;
+    const fp=(r.signature_hash||'').slice(0,10);
+    html+=`<tr><td>${i+1}</td><td>${(r.opp_type||'').replace(/_/g,' ')}</td><td title="${title.replace(/\"/g,'&quot;')}">${shortEvent}</td><td>$${(r.net_profit||0).toFixed(2)}</td><td>${(r.roi_pct||0).toFixed(2)}%</td><td>${(r.total_score||0).toFixed(2)}</td><td>${(r.fill_score||0).toFixed(2)}</td><td>${(r.persistence_score||0).toFixed(2)}</td><td>${r.duplicate_count||1}</td><td><code>${fp}</code></td></tr>`;
+  });
+  html+='</tbody></table>';
+  wrap.innerHTML=html;
 }
 
 // ── Score Decomposition ──

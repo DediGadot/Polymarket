@@ -45,8 +45,37 @@ class ScanTracker:
     actionable_now_profit_total: float = 0.0
     maker_candidate_count_total: int = 0
     maker_candidate_profit_total: float = 0.0
+    unique_opportunities_found_total: int = 0
+    repeated_opportunities_found_total: int = 0
+    unique_opportunity_profit_total: float = 0.0
+    repeated_opportunity_profit_total: float = 0.0
+    dedup_window_sec: float = 30.0
+    _last_seen_fingerprint_at: dict[tuple, float] = field(default_factory=dict)
     # Memory cap: max opportunities to retain (prevents unbounded growth)
     max_opportunities: int = 100
+
+    def _fingerprint(self, opp: Opportunity) -> tuple:
+        """Stable fingerprint for short-window duplicate detection."""
+        legs = tuple(
+            sorted(
+                (
+                    leg.token_id,
+                    leg.side.value,
+                    round(leg.price, 4),
+                    round(leg.size, 4),
+                )
+                for leg in opp.legs
+            )
+        )
+        return (
+            opp.type.value,
+            opp.event_id,
+            opp.reason_code,
+            tuple(sorted(opp.risk_flags)),
+            round(opp.net_profit, 2),
+            round(opp.roi_pct, 2),
+            legs,
+        )
 
     def record_cycle(
         self,
@@ -59,6 +88,7 @@ class ScanTracker:
         maker_candidates: list[Opportunity] | None = None,
     ) -> None:
         """Record one scan cycle's results."""
+        now = time.time()
         self.total_cycles = cycle
         self.total_markets_scanned += n_markets
         self.total_opportunities_found += len(opportunities)
@@ -72,6 +102,21 @@ class ScanTracker:
         if maker_candidates:
             self.maker_candidates.extend(maker_candidates)
         for opp in opportunities:
+            fingerprint = self._fingerprint(opp)
+            last_seen = self._last_seen_fingerprint_at.get(fingerprint)
+            is_repeat = (
+                last_seen is not None
+                and self.dedup_window_sec > 0
+                and (now - last_seen) <= self.dedup_window_sec
+            )
+            if is_repeat:
+                self.repeated_opportunities_found_total += 1
+                self.repeated_opportunity_profit_total += opp.net_profit
+            else:
+                self.unique_opportunities_found_total += 1
+                self.unique_opportunity_profit_total += opp.net_profit
+            self._last_seen_fingerprint_at[fingerprint] = now
+
             self.unique_event_ids.add(opp.event_id)
             self.by_type_totals[opp.type.value] = self.by_type_totals.get(opp.type.value, 0) + 1
             self.total_roi_sum += opp.roi_pct
@@ -129,6 +174,16 @@ class ScanTracker:
         if len(self.maker_candidates) > self.max_opportunities:
             self.maker_candidates = self.maker_candidates[-self.max_opportunities:]
 
+        # Prune stale dedup entries to keep memory bounded.
+        if self.dedup_window_sec > 0 and self._last_seen_fingerprint_at:
+            cutoff = now - self.dedup_window_sec
+            stale = [
+                fp for fp, ts in self._last_seen_fingerprint_at.items()
+                if ts < cutoff
+            ]
+            for fp in stale:
+                del self._last_seen_fingerprint_at[fp]
+
     def summary(self) -> dict:
         """Return aggregate summary dict, consistent with PnLTracker.summary() pattern."""
         n = self.total_opportunities_found
@@ -160,4 +215,9 @@ class ScanTracker:
             "actionable_now_profit_usd": round(self.actionable_now_profit_total, 2),
             "maker_candidate_count": self.maker_candidate_count_total,
             "maker_candidate_profit_usd": round(self.maker_candidate_profit_total, 2),
+            "dedup_window_sec": round(self.dedup_window_sec, 1),
+            "unique_opportunities_found": self.unique_opportunities_found_total,
+            "repeated_opportunities_found": self.repeated_opportunities_found_total,
+            "unique_opportunity_profit_usd": round(self.unique_opportunity_profit_total, 2),
+            "repeated_opportunity_profit_usd": round(self.repeated_opportunity_profit_total, 2),
         }

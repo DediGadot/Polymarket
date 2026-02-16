@@ -305,112 +305,124 @@ class ReportCollector:
 
         strategy_snap = asdict(self._strategy) if self._strategy else None
 
-        cycle_id = self._store.insert_cycle(
-            session_id=self._session_id,
-            cycle_num=self._cycle_num,
-            elapsed_sec=elapsed,
-            strategy_mode=strategy_mode,
-            gas_price_gwei=gas_gwei,
-            spike_count=spike_count,
-            has_momentum=has_momentum,
-            win_rate=win_rate,
-            markets_scanned=markets_scanned,
-            binary_count=binary_count,
-            negrisk_events=negrisk_events,
-            negrisk_markets=negrisk_markets,
-            opps_found=opps_found,
-            opps_executed=opps_executed,
-            funnel=self._funnel if self._funnel else None,
-            scanner_counts=self._scanner_counts if self._scanner_counts else None,
-            strategy_snapshot=strategy_snap,
-        )
-        self._cycle_id = cycle_id
+        try:
+            self._store.begin_transaction()
+            cycle_id = self._store.insert_cycle(
+                session_id=self._session_id,
+                cycle_num=self._cycle_num,
+                elapsed_sec=elapsed,
+                strategy_mode=strategy_mode,
+                gas_price_gwei=gas_gwei,
+                spike_count=spike_count,
+                has_momentum=has_momentum,
+                win_rate=win_rate,
+                markets_scanned=markets_scanned,
+                binary_count=binary_count,
+                negrisk_events=negrisk_events,
+                negrisk_markets=negrisk_markets,
+                opps_found=opps_found,
+                opps_executed=opps_executed,
+                funnel=self._funnel if self._funnel else None,
+                scanner_counts=self._scanner_counts if self._scanner_counts else None,
+                strategy_snapshot=strategy_snap,
+                commit=False,
+            )
+            self._cycle_id = cycle_id
 
-        # Flush scored opportunities
-        if self._scored_opps:
-            opp_dicts = [
-                {
-                    "event_id": o.event_id,
-                    "opp_type": o.opp_type,
-                    "net_profit": o.net_profit,
-                    "roi_pct": o.roi_pct,
-                    "required_capital": o.required_capital,
-                    "n_legs": o.n_legs,
-                    "is_buy_arb": o.is_buy_arb,
-                    "platform": o.platform,
-                    "total_score": o.total_score,
-                    "profit_score": o.profit_score,
-                    "fill_score": o.fill_score,
-                    "efficiency_score": o.efficiency_score,
-                    "urgency_score": o.urgency_score,
-                    "competition_score": o.competition_score,
-                    "persistence_score": o.persistence_score,
-                    "book_depth_ratio": o.book_depth_ratio,
-                    "confidence": o.confidence,
-                    "market_volume": o.market_volume,
-                    "time_to_resolution_hrs": o.time_to_resolution_hours,
-                    "legs_json": o.legs_json,
-                    "event_title": o.event_title,
-                    "timestamp": o.timestamp,
-                }
-                for o in self._scored_opps
-            ]
-            self._store.insert_opportunities(cycle_id, opp_dicts)
+            # Flush scored opportunities
+            if self._scored_opps:
+                opp_dicts = [
+                    {
+                        "event_id": o.event_id,
+                        "opp_type": o.opp_type,
+                        "net_profit": o.net_profit,
+                        "roi_pct": o.roi_pct,
+                        "required_capital": o.required_capital,
+                        "n_legs": o.n_legs,
+                        "is_buy_arb": o.is_buy_arb,
+                        "platform": o.platform,
+                        "total_score": o.total_score,
+                        "profit_score": o.profit_score,
+                        "fill_score": o.fill_score,
+                        "efficiency_score": o.efficiency_score,
+                        "urgency_score": o.urgency_score,
+                        "competition_score": o.competition_score,
+                        "persistence_score": o.persistence_score,
+                        "book_depth_ratio": o.book_depth_ratio,
+                        "confidence": o.confidence,
+                        "market_volume": o.market_volume,
+                        "time_to_resolution_hrs": o.time_to_resolution_hours,
+                        "legs_json": o.legs_json,
+                        "event_title": o.event_title,
+                        "timestamp": o.timestamp,
+                    }
+                    for o in self._scored_opps
+                ]
+                self._store.insert_opportunities(cycle_id, opp_dicts, commit=False)
 
-        # Flush safety rejections
-        if self._safety_rejections:
-            rej_dicts = [
-                {
-                    "event_id": r.event_id,
-                    "opp_type": r.opp_type,
-                    "check_name": r.check_name,
-                    "reason": r.reason,
-                    "net_profit": r.net_profit,
-                    "roi_pct": r.roi_pct,
-                    "timestamp": r.timestamp,
-                }
-                for r in self._safety_rejections
-            ]
-            self._store.insert_safety_rejections(cycle_id, rej_dicts)
+            # Flush safety rejections
+            if self._safety_rejections:
+                rej_dicts = [
+                    {
+                        "event_id": r.event_id,
+                        "opp_type": r.opp_type,
+                        "check_name": r.check_name,
+                        "reason": r.reason,
+                        "net_profit": r.net_profit,
+                        "roi_pct": r.roi_pct,
+                        "timestamp": r.timestamp,
+                    }
+                    for r in self._safety_rejections
+                ]
+                self._store.insert_safety_rejections(cycle_id, rej_dicts, commit=False)
 
-        # Flush cross-platform matches
-        if self._cross_platform_matches:
-            match_dicts = [
-                {
-                    "pm_event_id": m.pm_event_id,
-                    "pm_title": m.pm_title,
-                    "platform": m.platform,
-                    "ext_event_ticker": m.ext_event_ticker,
-                    "confidence": m.confidence,
-                    "match_method": m.match_method,
-                    "pm_best_ask": m.pm_best_ask,
-                    "ext_best_ask": m.ext_best_ask,
-                    "price_diff": m.price_diff,
-                    "timestamp": m.timestamp,
-                }
-                for m in self._cross_platform_matches
-            ]
-            self._store.insert_cross_platform_matches(cycle_id, match_dicts)
+            # Flush cross-platform matches
+            if self._cross_platform_matches:
+                match_dicts = [
+                    {
+                        "pm_event_id": m.pm_event_id,
+                        "pm_title": m.pm_title,
+                        "platform": m.platform,
+                        "ext_event_ticker": m.ext_event_ticker,
+                        "confidence": m.confidence,
+                        "match_method": m.match_method,
+                        "pm_best_ask": m.pm_best_ask,
+                        "ext_best_ask": m.ext_best_ask,
+                        "price_diff": m.price_diff,
+                        "timestamp": m.timestamp,
+                    }
+                    for m in self._cross_platform_matches
+                ]
+                self._store.insert_cross_platform_matches(cycle_id, match_dicts, commit=False)
 
-        # Flush trades recorded during the cycle after cycle_id exists.
-        if self._pending_trades:
-            for trade in self._pending_trades:
-                self._store.insert_trade(
-                    session_id=self._session_id,
-                    cycle_id=cycle_id,
-                    event_id=trade.event_id,
-                    opp_type=trade.opp_type,
-                    n_legs=trade.n_legs,
-                    fully_filled=trade.fully_filled,
-                    fill_prices_json=trade.fill_prices_json,
-                    fill_sizes_json=trade.fill_sizes_json,
-                    fees=trade.fees,
-                    gas_cost=trade.gas_cost,
-                    net_pnl=trade.net_pnl,
-                    execution_time_ms=trade.execution_time_ms,
-                    total_score=trade.total_score,
-                    simulated=trade.simulated,
-                )
+            # Flush trades recorded during the cycle after cycle_id exists.
+            if self._pending_trades:
+                trade_rows = [
+                    {
+                        "session_id": self._session_id,
+                        "cycle_id": cycle_id,
+                        "event_id": trade.event_id,
+                        "opp_type": trade.opp_type,
+                        "n_legs": trade.n_legs,
+                        "fully_filled": trade.fully_filled,
+                        "fill_prices_json": trade.fill_prices_json,
+                        "fill_sizes_json": trade.fill_sizes_json,
+                        "fees": trade.fees,
+                        "gas_cost": trade.gas_cost,
+                        "net_pnl": trade.net_pnl,
+                        "execution_time_ms": trade.execution_time_ms,
+                        "total_score": trade.total_score,
+                        "simulated": trade.simulated,
+                        "timestamp": time.time(),
+                    }
+                    for trade in self._pending_trades
+                ]
+                self._store.insert_trades(trade_rows, commit=False)
+
+            self._store.commit()
+        except Exception:
+            self._store.rollback()
+            raise
 
         # Push SSE summary
         if self._sse_callback:

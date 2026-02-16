@@ -8,6 +8,7 @@ from scanner.scorer import (
     ScoringContext,
     ScoredOpportunity,
     _score_profit,
+    _score_profit_risk_adjusted,
     _score_fill,
     _score_urgency,
     _score_competition,
@@ -165,6 +166,12 @@ class TestScoreOpportunity:
         binary_scored = score_opportunity(binary_opp, ctx)
         assert spike_scored.total_score > binary_scored.total_score
 
+    def test_risk_adjusted_profit_penalizes_thin_low_confidence_setup(self):
+        opp = _make_opp(net_profit=50.0)
+        thin_ctx = ScoringContext(book_depth_ratio=0.0, confidence=0.0)
+        deep_ctx = ScoringContext(book_depth_ratio=3.0, confidence=1.0)
+        assert _score_profit_risk_adjusted(opp, deep_ctx) > _score_profit_risk_adjusted(opp, thin_ctx)
+
 
 class TestRankOpportunities:
     def test_ranked_by_score(self):
@@ -197,3 +204,21 @@ class TestRankOpportunities:
         # High OFI divergence should rank first
         assert ranked[0].ofi_score > ranked[1].ofi_score
         assert ranked[0].total_score > ranked[1].total_score
+
+    def test_can_disable_risk_ranked_ev(self):
+        opp_big = _make_opp(net_profit=100.0)
+        opp_small = _make_opp(net_profit=5.0)
+        # Weak context for big opp, strong context for small opp.
+        ctx_weak = ScoringContext(book_depth_ratio=0.0, confidence=0.0)
+        ctx_strong = ScoringContext(book_depth_ratio=3.0, confidence=1.0)
+
+        scored_risk = score_opportunity(opp_big, ctx_weak, risk_ranked_ev_enabled=True)
+        scored_plain = score_opportunity(opp_big, ctx_weak, risk_ranked_ev_enabled=False)
+        assert scored_plain.profit_score > scored_risk.profit_score
+
+        ranked_risk = rank_opportunities(
+            [opp_big, opp_small],
+            contexts=[ctx_weak, ctx_strong],
+            risk_ranked_ev_enabled=True,
+        )
+        assert ranked_risk[0].opportunity.net_profit == 5.0

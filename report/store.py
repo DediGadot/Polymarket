@@ -7,6 +7,7 @@ the server reads the same file for API queries.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -57,6 +58,21 @@ class ReportStore:
         if "event_title" not in opp_cols:
             conn.execute("ALTER TABLE opportunities ADD COLUMN event_title TEXT NOT NULL DEFAULT ''")
 
+    def begin_transaction(self) -> None:
+        """Begin a write transaction if one is not already active."""
+        if not self._conn.in_transaction:
+            self._conn.execute("BEGIN")
+
+    def commit(self) -> None:
+        """Commit the current transaction if active."""
+        if self._conn.in_transaction:
+            self._conn.commit()
+
+    def rollback(self) -> None:
+        """Rollback the current transaction if active."""
+        if self._conn.in_transaction:
+            self._conn.rollback()
+
     # ── Write methods ──
 
     def start_session(
@@ -64,20 +80,24 @@ class ReportStore:
         mode: str,
         config_json: str = "{}",
         cli_args_json: str = "{}",
+        *,
+        commit: bool = True,
     ) -> int:
         cur = self._conn.execute(
             "INSERT INTO sessions (start_ts, mode, config_json, cli_args_json) VALUES (?, ?, ?, ?)",
             (time.time(), mode, config_json, cli_args_json),
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
 
-    def end_session(self, session_id: int) -> None:
+    def end_session(self, session_id: int, *, commit: bool = True) -> None:
         self._conn.execute(
             "UPDATE sessions SET end_ts = ? WHERE id = ?",
             (time.time(), session_id),
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
 
     def insert_cycle(
         self,
@@ -98,6 +118,8 @@ class ReportStore:
         funnel: dict[str, int] | None = None,
         scanner_counts: dict[str, int] | None = None,
         strategy_snapshot: dict[str, Any] | None = None,
+        *,
+        commit: bool = True,
     ) -> int:
         """Insert a cycle and its related funnel/scanner/strategy data atomically."""
         conn = self._conn
@@ -147,10 +169,17 @@ class ReportStore:
                 ),
             )
 
-        conn.commit()
+        if commit:
+            conn.commit()
         return cycle_id  # type: ignore[return-value]
 
-    def insert_opportunities(self, cycle_id: int, opps: list[dict[str, Any]]) -> None:
+    def insert_opportunities(
+        self,
+        cycle_id: int,
+        opps: list[dict[str, Any]],
+        *,
+        commit: bool = True,
+    ) -> None:
         if not opps:
             return
         self._conn.executemany(
@@ -179,9 +208,16 @@ class ReportStore:
                 for o in opps
             ],
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
 
-    def insert_safety_rejections(self, cycle_id: int, rejections: list[dict[str, Any]]) -> None:
+    def insert_safety_rejections(
+        self,
+        cycle_id: int,
+        rejections: list[dict[str, Any]],
+        *,
+        commit: bool = True,
+    ) -> None:
         if not rejections:
             return
         self._conn.executemany(
@@ -198,9 +234,16 @@ class ReportStore:
                 for r in rejections
             ],
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
 
-    def insert_cross_platform_matches(self, cycle_id: int, matches: list[dict[str, Any]]) -> None:
+    def insert_cross_platform_matches(
+        self,
+        cycle_id: int,
+        matches: list[dict[str, Any]],
+        *,
+        commit: bool = True,
+    ) -> None:
         if not matches:
             return
         self._conn.executemany(
@@ -220,7 +263,8 @@ class ReportStore:
                 for m in matches
             ],
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
 
     def insert_trade(
         self,
@@ -238,6 +282,8 @@ class ReportStore:
         execution_time_ms: float,
         total_score: float,
         simulated: bool = False,
+        *,
+        commit: bool = True,
     ) -> int:
         cur = self._conn.execute(
             """INSERT INTO trades
@@ -253,8 +299,50 @@ class ReportStore:
                 total_score, int(simulated), time.time(),
             ),
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
+
+    def insert_trades(
+        self,
+        trades: list[dict[str, Any]],
+        *,
+        commit: bool = True,
+    ) -> int:
+        """Bulk insert trades. Returns number of inserted rows."""
+        if not trades:
+            return 0
+        self._conn.executemany(
+            """INSERT INTO trades
+               (session_id, cycle_id, event_id, opp_type, n_legs,
+                fully_filled, fill_prices_json, fill_sizes_json,
+                fees, gas_cost, net_pnl, execution_time_ms,
+                total_score, simulated, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    t["session_id"],
+                    t["cycle_id"],
+                    t["event_id"],
+                    t["opp_type"],
+                    t["n_legs"],
+                    int(t["fully_filled"]),
+                    t["fill_prices_json"],
+                    t["fill_sizes_json"],
+                    t["fees"],
+                    t["gas_cost"],
+                    t["net_pnl"],
+                    t["execution_time_ms"],
+                    t["total_score"],
+                    int(t.get("simulated", False)),
+                    t.get("timestamp", time.time()),
+                )
+                for t in trades
+            ],
+        )
+        if commit:
+            self._conn.commit()
+        return len(trades)
 
     # ── Read methods (for API) ──
 
@@ -330,6 +418,77 @@ class ReportStore:
         query += " ORDER BY o.total_score DESC LIMIT ?"
         params.append(limit)
         return self._conn.execute(query, params).fetchall()
+
+    def get_unique_actionable(
+        self,
+        session_id: int,
+        *,
+        limit: int = 50,
+        min_score: float = 0.0,
+        min_fill_score: float = 0.50,
+        min_persistence: float = 0.50,
+        max_candidates: int = 5000,
+    ) -> list[dict[str, Any]]:
+        """
+        Return top-N unique actionable opportunities for a session.
+
+        Actionable proxy (reporting-only):
+        - buy-side opportunities
+        - non-maker strategy rows
+        - positive score/fill/persistence thresholds
+
+        Uniqueness is keyed by a stable fingerprint over
+        (opp_type, event_id, sorted[(token_id, side)]).
+        """
+        rows = self._conn.execute(
+            """SELECT o.* FROM opportunities o
+               JOIN cycles c ON o.cycle_id = c.id
+               WHERE c.session_id = ?
+                 AND o.is_buy_arb = 1
+                 AND o.opp_type != 'maker_rebalance'
+                 AND o.total_score >= ?
+                 AND o.fill_score >= ?
+                 AND o.persistence_score >= ?
+               ORDER BY o.total_score DESC, o.net_profit DESC
+               LIMIT ?""",
+            (session_id, min_score, min_fill_score, min_persistence, max_candidates),
+        ).fetchall()
+
+        best_by_signature: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            row_dict = dict(row)
+            signature_hash = self._opportunity_signature_hash(row_dict)
+            existing = best_by_signature.get(signature_hash)
+            if existing is None:
+                row_dict["signature_hash"] = signature_hash
+                row_dict["duplicate_count"] = 1
+                best_by_signature[signature_hash] = row_dict
+            else:
+                existing["duplicate_count"] += 1
+
+        unique_rows = list(best_by_signature.values())
+        unique_rows.sort(key=lambda r: (r["total_score"], r["net_profit"]), reverse=True)
+        return unique_rows[:limit]
+
+    @staticmethod
+    def _opportunity_signature_hash(row: dict[str, Any]) -> str:
+        """Build a stable fingerprint hash for opportunity deduplication."""
+        legs_raw = row.get("legs_json", "[]")
+        try:
+            legs = json.loads(legs_raw)
+        except (TypeError, json.JSONDecodeError):
+            legs = []
+
+        norm_legs = sorted(
+            (str(leg.get("token_id", "")), str(leg.get("side", "")))
+            for leg in legs
+            if isinstance(leg, dict)
+        )
+        payload = json.dumps(
+            [str(row.get("opp_type", "")), str(row.get("event_id", "")), norm_legs],
+            separators=(",", ":"),
+        )
+        return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
     def get_safety_rejections(
         self, session_id: int, limit: int = 200,

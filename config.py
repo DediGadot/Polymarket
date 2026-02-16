@@ -45,6 +45,8 @@ class Config(BaseSettings):
     # Timing
     scan_interval_sec: float = Field(default=1.0, gt=0)
     order_timeout_sec: float = Field(default=5.0, gt=0)
+    # Session-level duplicate suppression window for scan-only metrics.
+    scan_tracker_dedup_window_sec: float = Field(default=30.0, ge=0.0)
     # Safety cap for dry-run scans to avoid CLOB REST rate-limit storms.
     # Set to 0 to disable the auto-cap.
     dry_run_default_limit: int = Field(default=1200, ge=0)
@@ -171,6 +173,9 @@ class Config(BaseSettings):
     # short window; keep a separate actionable-now confidence/fill gate.
     correlation_actionable_min_confidence: float = Field(default=0.30, ge=0.0, le=1.0)
     correlation_actionable_min_fill_score: float = Field(default=0.35, ge=0.0, le=1.0)
+    # Rank opportunities by fill-risk-adjusted EV instead of raw theoretical
+    # profit in the scorer's profit component.
+    risk_ranked_ev_enabled: bool = True
     # Allow long-only transformed correlation structures (e.g. parent+child_no,
     # earlier_no+later) into the actionable taker BUY bucket.
     correlation_actionable_allow_structural_buy: bool = True

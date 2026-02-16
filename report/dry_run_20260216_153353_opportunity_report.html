@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>dry_run_20260216_153353_opportunity_report</title>
+  <style>
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      background-color: #1a1a1a;
+      border: none;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+    body {
+      max-width: min(96vw, 1800px);
+      padding-left: 18px;
+      padding-right: 18px;
+      padding-top: 28px;
+      padding-bottom: 32px;
+    }
+    tbody {
+      border-top: none;
+      border-bottom: none;
+    }
+    th {
+      border-top: none;
+      border-bottom: 1px solid #d9d9d9;
+    }
+    td {
+      border: none;
+    }
+    tbody tr + tr td {
+      border-top: 1px solid #efefef;
+    }
+  </style>
+</head>
+<body>
+<h1 id="dry-run-opportunity-reality-report-20260216_153353">Dry-Run
+Opportunity Reality Report (20260216_153353)</h1>
+<h2 id="run-setup">Run Setup</h2>
+<ul>
+<li>Mode: <code>--dry-run</code> with
+<code>RECORDING_ENABLED=true</code></li>
+<li>Date: 2026-02-16</li>
+<li>Cycles completed: <strong>301</strong></li>
+<li>Opportunities found: <strong>4458</strong></li>
+<li>Unique opportunity signatures: <strong>16</strong></li>
+<li>Unique events represented: <strong>8</strong></li>
+<li>Artifacts: <code>logs/dryrun10_20260216_153353.console.log</code>,
+<code>logs/dryrun10_20260216_153353.jsonl</code>,
+<code>recordings/dryrun10_20260216_153353</code>,
+<code>report/dry_run_20260216_153353_opportunity_deep_dive.csv</code></li>
+</ul>
+<h2 id="headline-findings">Headline Findings</h2>
+<ul>
+<li>Composition: correlation_arb=4458.</li>
+<li>Top reason codes: corr_parent_child_buy_liquidity_weighted=3254,
+corr_parent_child_liquidity_weighted=903,
+corr_complement_buy_liquidity_weighted=301.</li>
+<li>Realness mean score: <strong>85.05/100</strong>.</li>
+<li>Realness tier distribution: High=4, Medium=1, Medium-High=5, Very
+High=6.</li>
+<li>Timing proxy: median resolution horizon <strong>10.5mo</strong>,
+mean <strong>8.0mo</strong>.</li>
+<li>Correlation graph density (first logged cycle): <strong>16
+violations / 89 relations</strong>.</li>
+<li>Weak semantic GTA/Jesus pair instances detected:
+<strong>0</strong>.</li>
+<li>Operational warnings: dry-run auto-limit=1, CoinGecko 429=6.</li>
+</ul>
+<h2 id="before-vs-after-semantic-fix-impact">Before vs After (Semantic
+Fix Impact)</h2>
+<ul>
+<li>Baseline run: <code>20260216_145154</code> | Post-fix run:
+<code>20260216_153353</code></li>
+<li>Total opportunities: <strong>22615 -&gt; 4458</strong>
+(-80.3%).</li>
+<li>Unique signatures: <strong>76 -&gt; 16</strong> (-78.9%).</li>
+<li>Unique events: <strong>33 -&gt; 8</strong> (-75.8%).</li>
+<li>First-cycle graph: <strong>142 viol / 1050 rel</strong> -&gt;
+<strong>16 viol / 89 rel</strong>.</li>
+<li>Weak GTA/Jesus pair: <strong>302 -&gt; 0</strong> (eliminated).</li>
+<li>Interpretation: the semantic compatibility filter removed a large
+set of weakly-linked correlations while preserving a smaller, more
+coherent set.</li>
+</ul>
+<h2 id="scoring-method">Scoring Method</h2>
+<ul>
+<li>Score blends persistence, confidence, fill probability, depth,
+toxicity, realized-EV, and profit stability.</li>
+<li>Penalties apply for inventory-dependent legs, extremely high ROI
+likely driven by tiny notional, and very thin depth.</li>
+</ul>
+<h2 id="per-opportunity-deep-dive">Per-Opportunity Deep Dive</h2>
+<table>
+<colgroup>
+<col style="width: 8%" />
+<col style="width: 8%" />
+<col style="width: 8%" />
+<col style="width: 8%" />
+<col style="width: 8%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 8%" />
+<col style="width: 8%" />
+<col style="width: 8%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>#</th>
+<th>Opportunity</th>
+<th>Type</th>
+<th>Reason</th>
+<th>Sides</th>
+<th style="text-align: right;">Seen</th>
+<th style="text-align: right;">Avg Profit</th>
+<th style="text-align: right;">Avg ROI</th>
+<th>Realness</th>
+<th>Why</th>
+<th>When You See Money</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td>Will JD Vance win the 2028 US Presidential Election?</td>
+<td>correlation_arb</td>
+<td><code>corr_complement_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">301/301 (100.0%)</td>
+<td style="text-align: right;">$1136.53</td>
+<td style="text-align: right;">113.65%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 301/301 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Usually on resolution (~2.7y); may be monetized earlier if prices
+reconverge.</td>
+</tr>
+<tr class="even">
+<td>2</td>
+<td>StandX FDV above $800M one day after launch?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">301/301 (100.0%)</td>
+<td style="text-align: right;">$202.90</td>
+<td style="text-align: right;">36.38%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 301/301 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Usually by later parent/child resolution (~10.5mo); earlier
+reconvergence exit possible.</td>
+</tr>
+<tr class="odd">
+<td>3</td>
+<td>StandX FDV above $800M one day after launch?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">301/301 (100.0%)</td>
+<td style="text-align: right;">$149.65</td>
+<td style="text-align: right;">24.50%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 301/301 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Usually by later parent/child resolution (~10.5mo); earlier
+reconvergence exit possible.</td>
+</tr>
+<tr class="even">
+<td>4</td>
+<td>StandX FDV above $800M one day after launch?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">301/301 (100.0%)</td>
+<td style="text-align: right;">$2.48</td>
+<td style="text-align: right;">12.97%</td>
+<td>94.02 (Very High)</td>
+<td>persisted 301/301 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Usually by later parent/child resolution (~10.5mo); earlier
+reconvergence exit possible.</td>
+</tr>
+<tr class="odd">
+<td>5</td>
+<td>OpenAI $1t+ IPO before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">301/301 (100.0%)</td>
+<td style="text-align: right;">$77.47</td>
+<td style="text-align: right;">49.11%</td>
+<td>92.53 (Very High)</td>
+<td>persisted 301/301 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Usually by later parent/child resolution (~10.5mo); earlier
+reconvergence exit possible.</td>
+</tr>
+<tr class="even">
+<td>6</td>
+<td>Will OpenAI’s market cap be less than $500B at market close on IPO
+day?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">301/301 (100.0%)</td>
+<td style="text-align: right;">$111.61</td>
+<td style="text-align: right;">90.29%</td>
+<td>91.74 (Very High)</td>
+<td>persisted 301/301 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Usually by later parent/child resolution (~4.4mo); earlier
+reconvergence exit possible.</td>
+</tr>
+<tr class="odd">
+<td>7</td>
+<td>Will StandX launch a token by March 31?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">301/301 (100.0%)</td>
+<td style="text-align: right;">$1.97</td>
+<td style="text-align: right;">3.54%</td>
+<td>89.55 (High)</td>
+<td>persisted 301/301 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Usually by later parent/child resolution (~6.3w); earlier
+reconvergence exit possible.</td>
+</tr>
+<tr class="even">
+<td>8</td>
+<td>Will StandX launch a token by March 31?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">301/301 (100.0%)</td>
+<td style="text-align: right;">$5.09</td>
+<td style="text-align: right;">15.59%</td>
+<td>88.76 (High)</td>
+<td>persisted 301/301 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Usually by later parent/child resolution (~6.3w); earlier
+reconvergence exit possible.</td>
+</tr>
+<tr class="odd">
+<td>9</td>
+<td>Will Gavin Newsom announce a Presidential run before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">301/301 (100.0%)</td>
+<td style="text-align: right;">$5.99</td>
+<td style="text-align: right;">18.63%</td>
+<td>88.75 (High)</td>
+<td>persisted 301/301 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Usually by later parent/child resolution (~10.5mo); earlier
+reconvergence exit possible.</td>
+</tr>
+<tr class="even">
+<td>10</td>
+<td>StandX FDV above $800M one day after launch?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">301/301 (100.0%)</td>
+<td style="text-align: right;">$4.64</td>
+<td style="text-align: right;">90.52%</td>
+<td>87.46 (High)</td>
+<td>persisted 301/301 cycles; high model confidence; thin depth; risks:
+none</td>
+<td>Usually by later parent/child resolution (~10.5mo); earlier
+reconvergence exit possible.</td>
+</tr>
+<tr class="odd">
+<td>11</td>
+<td>MegaETH market cap (FDV) &gt;$2B one day after launch?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">122/301 (40.5%)</td>
+<td style="text-align: right;">$98.68</td>
+<td style="text-align: right;">9.87%</td>
+<td>79.35 (Medium-High)</td>
+<td>persisted 122/301 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Usually by later parent/child resolution (~4.3w); earlier
+reconvergence exit possible.</td>
+</tr>
+<tr class="even">
+<td>12</td>
+<td>EdgeX FDV above $1B one day after launch?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_liquidity_weighted</code></td>
+<td><code>BUY/SELL</code></td>
+<td style="text-align: right;">301/301 (100.0%)</td>
+<td style="text-align: right;">$15.70</td>
+<td style="text-align: right;">40.05%</td>
+<td>75.71 (Medium-High)</td>
+<td>persisted 301/301 cycles; high model confidence; moderate depth;
+inventory-dependent; risks: sell_inventory_required (301)</td>
+<td>Needs inventory for SELL leg; full edge typically settles by
+close/resolution (~10.5mo).</td>
+</tr>
+<tr class="odd">
+<td>13</td>
+<td>Will StandX launch a token by March 31?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_liquidity_weighted</code></td>
+<td><code>BUY/SELL</code></td>
+<td style="text-align: right;">301/301 (100.0%)</td>
+<td style="text-align: right;">$4.49</td>
+<td style="text-align: right;">86.27%</td>
+<td>74.34 (Medium-High)</td>
+<td>persisted 301/301 cycles; high model confidence; thin depth;
+inventory-dependent; risks: sell_inventory_required (301)</td>
+<td>Needs inventory for SELL leg; full edge typically settles by
+close/resolution (~6.3w).</td>
+</tr>
+<tr class="even">
+<td>14</td>
+<td>EdgeX FDV above $1B one day after launch?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_liquidity_weighted</code></td>
+<td><code>BUY/SELL</code></td>
+<td style="text-align: right;">301/301 (100.0%)</td>
+<td style="text-align: right;">$3.17</td>
+<td style="text-align: right;">56.55%</td>
+<td>74.33 (Medium-High)</td>
+<td>persisted 301/301 cycles; high model confidence; thin depth;
+inventory-dependent; risks: sell_inventory_required (301)</td>
+<td>Needs inventory for SELL leg; full edge typically settles by
+close/resolution (~10.5mo).</td>
+</tr>
+<tr class="odd">
+<td>15</td>
+<td>MegaETH market cap (FDV) &gt;$2B one day after launch?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">122/301 (40.5%)</td>
+<td style="text-align: right;">$2.88</td>
+<td style="text-align: right;">41.70%</td>
+<td>69.55 (Medium-High)</td>
+<td>persisted 122/301 cycles; high model confidence; thin depth; risks:
+none</td>
+<td>Usually by later parent/child resolution (~4.3w); earlier
+reconvergence exit possible.</td>
+</tr>
+<tr class="even">
+<td>16</td>
+<td>Will StandX launch a token by March 31?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">301/301 (100.0%)</td>
+<td style="text-align: right;">$6.81</td>
+<td style="text-align: right;">172.06%</td>
+<td>62.94 (Medium)</td>
+<td>persisted 301/301 cycles; high model confidence; thin depth; ROI
+likely notional-inflated; risks: none</td>
+<td>Usually by later parent/child resolution (~6.3w); earlier
+reconvergence exit possible.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="notes">Notes</h2>
+<ul>
+<li>Dry-run PnL is theoretical and assumes quoted liquidity can be
+captured at observed prices.</li>
+<li>For real trading, execution latency, queue position, and settlement
+timing remain major constraints.</li>
+</ul>
+</body>
+</html>

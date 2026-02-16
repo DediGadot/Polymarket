@@ -106,6 +106,22 @@ def create_app(store: ReportStore) -> Any:
             session_id, opp_type=type, min_score=min_score, limit=limit,
         )
 
+    @app.get("/api/sessions/{session_id}/opportunities/unique-actionable")
+    async def get_unique_actionable(
+        session_id: int,
+        limit: int = Query(50, ge=1, le=1000),
+        min_score: float = Query(0.0, ge=0.0),
+        min_fill: float = Query(0.50, ge=0.0, le=1.0),
+        min_persistence: float = Query(0.50, ge=0.0, le=1.0),
+    ):
+        return store.get_unique_actionable(
+            session_id,
+            limit=limit,
+            min_score=min_score,
+            min_fill_score=min_fill,
+            min_persistence=min_persistence,
+        )
+
     # ── Safety ──
 
     @app.get("/api/sessions/{session_id}/safety")

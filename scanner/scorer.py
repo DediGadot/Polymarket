@@ -63,13 +63,15 @@ W_OFI = 0.10
 def score_opportunity(
     opp: Opportunity,
     ctx: ScoringContext,
+    *,
+    risk_ranked_ev_enabled: bool = True,
 ) -> ScoredOpportunity:
     """
     Score an opportunity using a weighted composite of 5 factors.
     Returns ScoredOpportunity with total_score and per-factor breakdown.
     Higher score = better opportunity.
     """
-    profit_score = _score_profit(opp)
+    profit_score = _score_profit_risk_adjusted(opp, ctx) if risk_ranked_ev_enabled else _score_profit(opp)
     fill_score = _score_fill(opp, ctx)
     efficiency_score = _score_efficiency(opp, ctx)
     urgency_score = _score_urgency(opp, ctx)
@@ -104,15 +106,66 @@ def score_opportunity(
 
 
 def _score_profit(opp: Opportunity) -> float:
+    return _score_profit_usd(opp.net_profit)
+
+
+def _score_profit_usd(net_profit_usd: float) -> float:
     """
     Expected dollar profit, log-scaled to 0-1.
     log($0.50) ≈ 0.30, log($5) ≈ 0.70, log($50) ≈ 1.0
     """
-    if opp.net_profit <= 0:
+    if net_profit_usd <= 0:
         return 0.0
     # Log scale: $0.10 → 0.0, $100 → 1.0
-    raw = math.log10(max(opp.net_profit, 0.10)) + 1.0  # shift so log(0.1)=0
+    raw = math.log10(max(net_profit_usd, 0.10)) + 1.0  # shift so log(0.1)=0
     return max(0.0, min(1.0, raw / 3.0))  # normalize: log(1000)=3
+
+
+def _score_profit_risk_adjusted(opp: Opportunity, ctx: ScoringContext) -> float:
+    """
+    Fill-risk-adjusted EV score (0..1), mapped with the same log transform
+    as nominal profit scoring.
+
+    This downranks opportunities with weak depth/persistence/confidence even
+    when headline net_profit is large.
+    """
+    risk_ev = _risk_adjusted_ev_usd(opp, ctx)
+    return _score_profit_usd(risk_ev)
+
+
+def _risk_adjusted_ev_usd(opp: Opportunity, ctx: ScoringContext) -> float:
+    """
+    Conservative EV proxy:
+      EV ~= net_profit * p_fill^1.5 - gas * (1 - p_fill)
+
+    p_fill combines observed fill score, depth, persistence confidence, and
+    maker execution quality hints when present.
+    """
+    if opp.net_profit <= 0:
+        return 0.0
+
+    fill_component = _score_fill(opp, ctx)  # 0..1, already depth-aware
+    depth_component = max(0.0, min(1.0, ctx.book_depth_ratio))
+    confidence_component = max(0.0, min(1.0, ctx.confidence))
+
+    execution_component = 1.0
+    if opp.type == OpportunityType.MAKER_REBALANCE:
+        execution_component = max(
+            0.0,
+            min(1.0, opp.pair_fill_prob * (1.0 - 0.60 * max(0.0, opp.toxicity_score))),
+        )
+
+    p_fill = (
+        0.50 * fill_component
+        + 0.25 * depth_component
+        + 0.20 * confidence_component
+        + 0.05 * execution_component
+    )
+    p_fill = max(0.0, min(1.0, p_fill))
+
+    edge_realization = max(0.0, opp.net_profit) * (p_fill ** 1.5)
+    friction = max(0.0, opp.estimated_gas_cost) * (1.0 - p_fill)
+    return max(0.0, edge_realization - friction)
 
 
 def _score_fill(opp: Opportunity, ctx: ScoringContext) -> float:
@@ -190,6 +243,8 @@ def _score_ofi(ctx: ScoringContext) -> float:
 def rank_opportunities(
     opps: list[Opportunity],
     contexts: list[ScoringContext] | None = None,
+    *,
+    risk_ranked_ev_enabled: bool = True,
 ) -> list[ScoredOpportunity]:
     """
     Score and rank a list of opportunities. Returns sorted by total_score descending.
@@ -210,7 +265,7 @@ def rank_opportunities(
     scored: list[ScoredOpportunity] = []
     for i, opp in enumerate(opps):
         ctx = contexts[i] if i < len(contexts) else ScoringContext()
-        scored.append(score_opportunity(opp, ctx))
+        scored.append(score_opportunity(opp, ctx, risk_ranked_ev_enabled=risk_ranked_ev_enabled))
 
     scored.sort(key=lambda s: s.total_score, reverse=True)
     return scored

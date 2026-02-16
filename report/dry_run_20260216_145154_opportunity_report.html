@@ -1,0 +1,1421 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>dry_run_20260216_145154_opportunity_report</title>
+  <style>
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: min(96vw, 1800px);
+      padding-left: 18px;
+      padding-right: 18px;
+      padding-top: 28px;
+      padding-bottom: 32px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      background-color: #1a1a1a;
+      border: none;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: none;
+      border-bottom: none;
+    }
+    th {
+      border-top: none;
+      border-bottom: 1px solid #d9d9d9;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      border: none;
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    tbody tr + tr td {
+      border-top: 1px solid #efefef;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+</head>
+<body>
+<h1 id="dry-run-opportunity-reality-report-20260216_145154">Dry-Run
+Opportunity Reality Report (20260216_145154)</h1>
+<h2 id="run-setup">Run Setup</h2>
+<ul>
+<li>Mode: <code>--dry-run</code> with
+<code>RECORDING_ENABLED=true</code></li>
+<li>Window: 10-minute timeout run started on 2026-02-16 at ~14:51:58
+local, stopped at ~15:01:54</li>
+<li>Cycles completed: <strong>302</strong></li>
+<li>Markets scanned (cumulative): <strong>647,790</strong> (from runtime
+summary)</li>
+<li>Opportunity instances observed: <strong>22615</strong></li>
+<li>Unique opportunity signatures (deep-dived): <strong>76</strong></li>
+<li>Output artifacts:
+<code>logs/dryrun10_20260216_145154.console.log</code>,
+<code>report/dry_run_20260216_145154_opportunity_deep_dive.csv</code>,
+<code>recordings/dryrun10_20260216_145154</code></li>
+</ul>
+<h2 id="headline-findings">Headline Findings</h2>
+<ul>
+<li>Composition: <strong>22348 correlation</strong> opportunities and
+<strong>267 maker</strong> opportunities.</li>
+<li>Dominant reason code:
+<code>corr_parent_child_buy_liquidity_weighted</code> (16006
+instances).</li>
+<li>Inventory-dependent patterns (<code>BUY/SELL</code> with
+<code>sell_inventory_required</code>): <strong>2718</strong> instances;
+these are less immediately actionable.</li>
+<li>Realness score (0-100): overall mean <strong>87.70</strong>;
+correlation mean <strong>88.18</strong>; maker
+<strong>51.80</strong>.</li>
+<li>Realness tiers: High=19, Medium=6, Medium-High=10, Very
+High=41.</li>
+<li>Time-to-money proxy (median time-to-resolution): median
+<strong><sub>4.4mo<strong>, mean </strong></sub>5.9mo</strong>.</li>
+<li>Practical implication: most edges looked structurally persistent,
+but many likely monetize on multi-week to multi-month timelines unless
+you actively trade out earlier.</li>
+<li>Operational warnings: dry-run market cap enabled (1), CoinGecko 429
+rate limit (7).</li>
+</ul>
+<h2 id="how-real-is-each-opportunity">How Real Is Each Opportunity?</h2>
+<p>Scoring method used for each signature: - Inputs: persistence across
+cycles, confidence, fill probability, book depth, toxicity, realized-EV
+score, and profit stability. - Penalties: inventory dependence
+(<code>SELL</code> legs), ultra-high ROI likely driven by tiny notional,
+and very thin depth. - Interpretation: higher score = more likely
+executable/real in practice, not just theoretical.</p>
+<h2 id="per-opportunity-deep-dive-all-unique-signatures">Per-Opportunity
+Deep Dive (All Unique Signatures)</h2>
+<table>
+<colgroup>
+<col style="width: 8%" />
+<col style="width: 8%" />
+<col style="width: 8%" />
+<col style="width: 8%" />
+<col style="width: 8%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 11%" />
+<col style="width: 8%" />
+<col style="width: 8%" />
+<col style="width: 8%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>#</th>
+<th>Opportunity</th>
+<th>Type</th>
+<th>Reason</th>
+<th>Sides</th>
+<th style="text-align: right;">Seen</th>
+<th style="text-align: right;">Avg Profit</th>
+<th style="text-align: right;">Avg ROI</th>
+<th>Realness</th>
+<th>Why</th>
+<th>When You See Money</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td>Will JD Vance win the 2028 US Presidential Election?</td>
+<td>correlation_arb</td>
+<td><code>corr_complement_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$1136.65</td>
+<td style="text-align: right;">113.67%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Usually realized at resolution (~2.7y); can be monetized earlier if
+prices reconverge.</td>
+</tr>
+<tr class="even">
+<td>2</td>
+<td>Will GTA 6 cost $100+?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$901.04</td>
+<td style="text-align: right;">90.10%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~12.4d);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>3</td>
+<td>Will the US confirm that aliens exist before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$538.36</td>
+<td style="text-align: right;">53.84%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>4</td>
+<td>Will the US confirm that aliens exist before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$515.05</td>
+<td style="text-align: right;">51.51%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>5</td>
+<td>Will the U.S. invade Iran before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$375.94</td>
+<td style="text-align: right;">42.85%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>6</td>
+<td>Will the U.S. invade Iran before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$363.41</td>
+<td style="text-align: right;">40.83%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>7</td>
+<td>Will Trump deport less than 250,000?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$322.65</td>
+<td style="text-align: right;">32.27%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~4.3w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>8</td>
+<td>Will Trump resign before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$219.41</td>
+<td style="text-align: right;">21.94%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>9</td>
+<td>Will Trump deport less than 250,000?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$168.13</td>
+<td style="text-align: right;">16.81%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~4.3w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>10</td>
+<td>Will the U.S. invade Iran before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$136.26</td>
+<td style="text-align: right;">13.63%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>11</td>
+<td>StandX FDV above $800M one day after launch?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$129.61</td>
+<td style="text-align: right;">24.51%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>12</td>
+<td>Will Trump deport less than 250,000?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$91.60</td>
+<td style="text-align: right;">9.16%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~4.3w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>13</td>
+<td>Will Trump resign before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$86.86</td>
+<td style="text-align: right;">8.69%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>14</td>
+<td>Israel x Iran ceasefire broken by March 31, 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_temporal_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$40.95</td>
+<td style="text-align: right;">7.51%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later temporal leg’s resolution (~6.2w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>15</td>
+<td>Will Trump resign before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$20.31</td>
+<td style="text-align: right;">2.03%</td>
+<td>97.26 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>16</td>
+<td>Ukraine signs peace deal with Russia by March 31?</td>
+<td>correlation_arb</td>
+<td><code>corr_temporal_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$13.50</td>
+<td style="text-align: right;">2.03%</td>
+<td>97.25 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later temporal leg’s resolution (~6.2w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>17</td>
+<td>Will Mamdani raise the minimum wage to $30 before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$19.90</td>
+<td style="text-align: right;">4.15%</td>
+<td>97.07 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>18</td>
+<td>Foreign intervention in Gaza by March 31?</td>
+<td>correlation_arb</td>
+<td><code>corr_temporal_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$23.01</td>
+<td style="text-align: right;">5.02%</td>
+<td>96.86 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later temporal leg’s resolution (~6.2w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>19</td>
+<td>Will xAI release a dLLM by June 30?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$89.95</td>
+<td style="text-align: right;">26.55%</td>
+<td>95.52 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~4.4mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>20</td>
+<td>Israel x Iran ceasefire broken by March 31, 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_temporal_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$143.37</td>
+<td style="text-align: right;">42.42%</td>
+<td>95.51 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later temporal leg’s resolution (~6.2w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>21</td>
+<td>Will Russia test a nuclear weapon by March 31 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$8.13</td>
+<td style="text-align: right;">2.74%</td>
+<td>94.93 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~4.3w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>22</td>
+<td>OpenAI $1t+ IPO before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$143.63</td>
+<td style="text-align: right;">49.22%</td>
+<td>94.88 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>23</td>
+<td>Will Russia test a nuclear weapon by March 31 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$17.26</td>
+<td style="text-align: right;">6.01%</td>
+<td>94.81 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~4.3w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>24</td>
+<td>Will xAI release a dLLM by June 30?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$180.00</td>
+<td style="text-align: right;">72.37%</td>
+<td>94.23 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~4.4mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>25</td>
+<td>Will Russia test a nuclear weapon by March 31 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$69.05</td>
+<td style="text-align: right;">29.32%</td>
+<td>94.02 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~4.3w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>26</td>
+<td>Will xAI release a dLLM by June 30?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$197.15</td>
+<td style="text-align: right;">85.14%</td>
+<td>93.95 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~4.4mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>27</td>
+<td>Will the US confirm that aliens exist before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$41.75</td>
+<td style="text-align: right;">19.00%</td>
+<td>93.75 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>28</td>
+<td>Trump impeached by end of 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$6.71</td>
+<td style="text-align: right;">3.05%</td>
+<td>93.74 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>29</td>
+<td>Will MetaMask launch a token by June 30?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$8.36</td>
+<td style="text-align: right;">4.12%</td>
+<td>93.43 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~7.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>30</td>
+<td>Trump impeached by end of 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$29.40</td>
+<td style="text-align: right;">14.89%</td>
+<td>93.33 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>31</td>
+<td>Will MetaMask launch a token by June 30?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$37.95</td>
+<td style="text-align: right;">21.89%</td>
+<td>92.86 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~7.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>32</td>
+<td>Will MetaMask launch a token by June 30?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$46.40</td>
+<td style="text-align: right;">28.15%</td>
+<td>92.68 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~7.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>33</td>
+<td>Will OpenAI’s market cap be less than $500B at market close on IPO
+day?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$33.72</td>
+<td style="text-align: right;">24.15%</td>
+<td>92.12 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~4.4mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>34</td>
+<td>Will Russia capture Kostyantynivka by March 31?</td>
+<td>correlation_arb</td>
+<td><code>corr_temporal_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$24.35</td>
+<td style="text-align: right;">17.58%</td>
+<td>92.10 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later temporal leg’s resolution (~6.2w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>35</td>
+<td>Will OpenAI’s market cap be less than $500B at market close on IPO
+day?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$123.48</td>
+<td style="text-align: right;">90.40%</td>
+<td>92.06 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~4.4mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>36</td>
+<td>Will Trump deport 750,000 or more people in 2025?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$32.73</td>
+<td style="text-align: right;">9.53%</td>
+<td>91.05 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~4.3w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>37</td>
+<td>Will Mamdani raise the minimum wage to $30 before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$46.70</td>
+<td style="text-align: right;">56.13%</td>
+<td>90.63 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>38</td>
+<td>Will Trump deport 750,000 or more people in 2025?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$69.53</td>
+<td style="text-align: right;">23.01%</td>
+<td>90.61 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~4.3w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>39</td>
+<td>GTA 6 launch postponed again?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$15.37</td>
+<td style="text-align: right;">20.35%</td>
+<td>90.38 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later parent/child resolution (~9.1mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>40</td>
+<td>Israel x Iran ceasefire broken by March 31, 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_temporal_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$28.00</td>
+<td style="text-align: right;">38.94%</td>
+<td>90.27 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later temporal leg’s resolution (~6.2w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>41</td>
+<td>Will the U.S. test a nuclear weapon by March 31 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$18.38</td>
+<td style="text-align: right;">28.05%</td>
+<td>90.06 (Very High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later parent/child resolution (~6.2w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>42</td>
+<td>Will the U.S. test a nuclear weapon by March 31 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$25.10</td>
+<td style="text-align: right;">42.69%</td>
+<td>89.83 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later parent/child resolution (~6.2w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>43</td>
+<td>Will the U.S. test a nuclear weapon by March 31 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$25.94</td>
+<td style="text-align: right;">44.76%</td>
+<td>89.80 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later parent/child resolution (~6.2w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>44</td>
+<td>Will StandX launch a token by March 31?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$13.79</td>
+<td style="text-align: right;">31.35%</td>
+<td>89.27 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later parent/child resolution (~6.3w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>45</td>
+<td>Will StandX launch a token by March 31?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$14.37</td>
+<td style="text-align: right;">33.11%</td>
+<td>89.25 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later parent/child resolution (~6.3w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>46</td>
+<td>Will Israel launch a major ground offensive in Lebanon by March
+31?</td>
+<td>correlation_arb</td>
+<td><code>corr_temporal_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$2.06</td>
+<td style="text-align: right;">4.81%</td>
+<td>89.17 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later temporal leg’s resolution (~6.2w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>47</td>
+<td>EdgeX FDV above $1B one day after launch?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$2.54</td>
+<td style="text-align: right;">17.39%</td>
+<td>89.15 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>48</td>
+<td>Will Israel launch a major ground offensive in Lebanon by March
+31?</td>
+<td>correlation_arb</td>
+<td><code>corr_temporal_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$1.30</td>
+<td style="text-align: right;">2.97%</td>
+<td>89.15 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later temporal leg’s resolution (~6.2w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>49</td>
+<td>Will Trump create a tariff dividend by March 31?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$4.80</td>
+<td style="text-align: right;">15.95%</td>
+<td>88.69 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later parent/child resolution (~6.2w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>50</td>
+<td>Will Trump issue a Gold Card by March 31?</td>
+<td>correlation_arb</td>
+<td><code>corr_temporal_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$5.50</td>
+<td style="text-align: right;">18.71%</td>
+<td>88.66 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later temporal leg’s resolution (~6.2w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>51</td>
+<td>Will Trump’s approval rating hit 40% in 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$3.10</td>
+<td style="text-align: right;">10.77%</td>
+<td>88.61 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>52</td>
+<td>Kraken IPO closing market cap above $16B?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$1.94</td>
+<td style="text-align: right;">7.16%</td>
+<td>88.51 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>53</td>
+<td>MegaETH market cap (FDV) &gt;$2B one day after launch?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$8.93</td>
+<td style="text-align: right;">108.44%</td>
+<td>88.42 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later parent/child resolution (~4.3w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>54</td>
+<td>Trump impeached by end of 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$8.22</td>
+<td style="text-align: right;">34.72%</td>
+<td>88.42 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>55</td>
+<td>Kraken IPO by March 31, 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_temporal_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$7.76</td>
+<td style="text-align: right;">36.52%</td>
+<td>88.31 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later temporal leg’s resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>56</td>
+<td>MegaETH market cap (FDV) &gt;$2B one day after launch?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$3.00</td>
+<td style="text-align: right;">43.49%</td>
+<td>87.57 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; thin depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~4.3w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>57</td>
+<td>StandX FDV above $800M one day after launch?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$4.77</td>
+<td style="text-align: right;">93.00%</td>
+<td>87.50 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; thin depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>58</td>
+<td>Will Trump’s approval rating hit 40% in 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$0.70</td>
+<td style="text-align: right;">4.61%</td>
+<td>87.20 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>59</td>
+<td>Will Trump meet with Putin by March 31, 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_temporal_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$0.10</td>
+<td style="text-align: right;">1.58%</td>
+<td>84.09 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; thin depth; risks:
+none</td>
+<td>Typically realized at the later temporal leg’s resolution (~6.2w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>60</td>
+<td>OpenAI $1t+ IPO before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$233.30</td>
+<td style="text-align: right;">222.49%</td>
+<td>82.13 (High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth; ROI
+likely notional-inflated; risks: none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>61</td>
+<td>Will Trump’s approval rating hit 40% in 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$56.60</td>
+<td style="text-align: right;">169.97%</td>
+<td>79.97 (Medium-High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth; ROI
+likely notional-inflated; risks: none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>62</td>
+<td>StandX FDV above $800M one day after launch?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$11.98</td>
+<td style="text-align: right;">231.42%</td>
+<td>79.21 (Medium-High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth; ROI
+likely notional-inflated; risks: none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>63</td>
+<td>OpenAI $1t+ IPO before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$17.66</td>
+<td style="text-align: right;">155.54%</td>
+<td>79.06 (Medium-High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth; ROI
+likely notional-inflated; risks: none</td>
+<td>Typically realized at the later parent/child resolution (~10.5mo);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>64</td>
+<td>Will StandX launch a token by March 31?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$20.29</td>
+<td style="text-align: right;">232.20%</td>
+<td>78.94 (Medium-High)</td>
+<td>persisted 302/302 cycles; high model confidence; thin depth; ROI
+likely notional-inflated; risks: none</td>
+<td>Typically realized at the later parent/child resolution (~6.3w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>65</td>
+<td>Will Trump deport 750,000 or more people in 2025?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">116/302 (38.4%)</td>
+<td style="text-align: right;">$23.01</td>
+<td style="text-align: right;">3.08%</td>
+<td>78.83 (Medium-High)</td>
+<td>persisted 116/302 cycles; high model confidence; good depth; risks:
+none</td>
+<td>Typically realized at the later parent/child resolution (~4.3w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="even">
+<td>66</td>
+<td>Will Trump deport 750,000 or more people in 2025?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_buy_liquidity_weighted</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">186/302 (61.6%)</td>
+<td style="text-align: right;">$10.01</td>
+<td style="text-align: right;">45.75%</td>
+<td>76.78 (Medium-High)</td>
+<td>persisted 186/302 cycles; high model confidence; moderate depth;
+risks: none</td>
+<td>Typically realized at the later parent/child resolution (~4.3w);
+earlier convergence exits are possible.</td>
+</tr>
+<tr class="odd">
+<td>67</td>
+<td>Trump impeached by end of 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_liquidity_weighted</code></td>
+<td><code>BUY/SELL</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$25.61</td>
+<td style="text-align: right;">94.04%</td>
+<td>75.30 (Medium-High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+inventory-dependent; risks: sell_inventory_required (302)</td>
+<td>Requires inventory for SELL leg; cashflow is immediate only on that
+sale, full edge realization is after close/resolution (~10.5mo).</td>
+</tr>
+<tr class="even">
+<td>68</td>
+<td>EdgeX FDV above $1B one day after launch?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_liquidity_weighted</code></td>
+<td><code>BUY/SELL</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$3.31</td>
+<td style="text-align: right;">60.13%</td>
+<td>74.38 (Medium-High)</td>
+<td>persisted 302/302 cycles; high model confidence; thin depth;
+inventory-dependent; risks: sell_inventory_required (302)</td>
+<td>Requires inventory for SELL leg; cashflow is immediate only on that
+sale, full edge realization is after close/resolution (~10.5mo).</td>
+</tr>
+<tr class="odd">
+<td>69</td>
+<td>Will Trump resign before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_liquidity_weighted</code></td>
+<td><code>BUY/SELL</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$343.29</td>
+<td style="text-align: right;">233.20%</td>
+<td>70.61 (Medium-High)</td>
+<td>persisted 302/302 cycles; high model confidence; good depth;
+inventory-dependent; ROI likely notional-inflated; risks:
+sell_inventory_required (302)</td>
+<td>Requires inventory for SELL leg; cashflow is immediate only on that
+sale, full edge realization is after close/resolution (~10.5mo).</td>
+</tr>
+<tr class="even">
+<td>70</td>
+<td>Will any presidential candidate win outright in the first round of
+the Brazil election?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_liquidity_weighted</code></td>
+<td><code>BUY/SELL</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$97.46</td>
+<td style="text-align: right;">132.44%</td>
+<td>69.10 (Medium-High)</td>
+<td>persisted 302/302 cycles; high model confidence; moderate depth;
+inventory-dependent; ROI likely notional-inflated; risks:
+sell_inventory_required (302)</td>
+<td>Requires inventory for SELL leg; cashflow is immediate only on that
+sale, full edge realization is after close/resolution (~7.6mo).</td>
+</tr>
+<tr class="odd">
+<td>71</td>
+<td>Will StandX launch a token by March 31?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_liquidity_weighted</code></td>
+<td><code>BUY/SELL</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$1.25</td>
+<td style="text-align: right;">30.89%</td>
+<td>59.40 (Medium)</td>
+<td>persisted 302/302 cycles; high model confidence; thin depth;
+inventory-dependent; risks: sell_inventory_required (302)</td>
+<td>Requires inventory for SELL leg; cashflow is immediate only on that
+sale, full edge realization is after close/resolution (~6.3w).</td>
+</tr>
+<tr class="even">
+<td>72</td>
+<td>Will the U.S. test a nuclear weapon by March 31 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_liquidity_weighted</code></td>
+<td><code>BUY/SELL</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$2.75</td>
+<td style="text-align: right;">109.03%</td>
+<td>59.39 (Medium)</td>
+<td>persisted 302/302 cycles; high model confidence; thin depth;
+inventory-dependent; risks: sell_inventory_required (302)</td>
+<td>Requires inventory for SELL leg; cashflow is immediate only on that
+sale, full edge realization is after close/resolution (~6.2w).</td>
+</tr>
+<tr class="odd">
+<td>73</td>
+<td>MegaETH market cap (FDV) &gt;$2B one day after launch?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_liquidity_weighted</code></td>
+<td><code>BUY/SELL</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$1.15</td>
+<td style="text-align: right;">29.22%</td>
+<td>59.39 (Medium)</td>
+<td>persisted 302/302 cycles; high model confidence; thin depth;
+inventory-dependent; risks: sell_inventory_required (302)</td>
+<td>Requires inventory for SELL leg; cashflow is immediate only on that
+sale, full edge realization is after close/resolution (~4.3w).</td>
+</tr>
+<tr class="even">
+<td>74</td>
+<td>Will Trump resign before 2027?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_liquidity_weighted</code></td>
+<td><code>BUY/SELL</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$0.62</td>
+<td style="text-align: right;">36.98%</td>
+<td>58.68 (Medium)</td>
+<td>persisted 302/302 cycles; high model confidence; thin depth;
+inventory-dependent; risks: sell_inventory_required (302)</td>
+<td>Requires inventory for SELL leg; cashflow is immediate only on that
+sale, full edge realization is after close/resolution (~10.5mo).</td>
+</tr>
+<tr class="odd">
+<td>75</td>
+<td>Will the U.S. test a nuclear weapon by March 31 2026?</td>
+<td>correlation_arb</td>
+<td><code>corr_parent_child_liquidity_weighted</code></td>
+<td><code>BUY/SELL</code></td>
+<td style="text-align: right;">302/302 (100.0%)</td>
+<td style="text-align: right;">$6.01</td>
+<td style="text-align: right;">238.68%</td>
+<td>53.47 (Medium)</td>
+<td>persisted 302/302 cycles; high model confidence; thin depth;
+inventory-dependent; ROI likely notional-inflated; risks:
+sell_inventory_required (302)</td>
+<td>Requires inventory for SELL leg; cashflow is immediate only on that
+sale, full edge realization is after close/resolution (~6.2w).</td>
+</tr>
+<tr class="even">
+<td>76</td>
+<td>Cobie mindshare all time high by March 31?</td>
+<td>maker_rebalance</td>
+<td><code>-</code></td>
+<td><code>BUY/BUY</code></td>
+<td style="text-align: right;">267/302 (88.4%)</td>
+<td style="text-align: right;">$0.38</td>
+<td style="text-align: right;">0.74%</td>
+<td>51.80 (Medium)</td>
+<td>persisted 267/302 cycles; low model confidence; thin depth; risks:
+none</td>
+<td>Only after both maker legs fill; economic edge usually realized by
+market resolution (~6.3w) unless manually closed earlier.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="additional-observations">Additional Observations</h2>
+<ul>
+<li>Repetition was very high: the same signatures persisted nearly every
+cycle, indicating structural rather than random one-off
+dislocations.</li>
+<li>Theoretical totals are not equal to realizable PnL: dry-run assumes
+quoted liquidity and no queue slippage; real fills may be lower.</li>
+<li>Maker edge was tiny (sub-$1 average signature profit) and
+intermittently absent; likely sensitive to queue position and
+microstructure noise.</li>
+<li>Several very high ROI signatures came from small required capital or
+thin books; those deserve manual depth checks before trusting headline
+ROI.</li>
+<li><code>BUY/SELL</code> inventory-required signatures can look
+profitable in scans but may not be actionable without existing inventory
+and good basis.</li>
+</ul>
+</body>
+</html>

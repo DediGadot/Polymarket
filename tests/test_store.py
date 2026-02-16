@@ -181,6 +181,70 @@ class TestOpportunities:
         result = store.get_opportunities(sid, opp_type="negrisk_rebalance")
         assert len(result) == 0
 
+    def test_get_unique_actionable_deduplicates_by_fingerprint(self, store: ReportStore) -> None:
+        sid = store.start_session(mode="TEST")
+        cid = store.insert_cycle(
+            session_id=sid, cycle_num=1, elapsed_sec=1.0,
+            strategy_mode="aggressive", gas_price_gwei=30.0,
+            spike_count=0, has_momentum=False, win_rate=0.5,
+            markets_scanned=100, binary_count=80, negrisk_events=5,
+            negrisk_markets=20, opps_found=3, opps_executed=0,
+        )
+        # First two rows differ in price, but share the same token/side fingerprint.
+        opps = [
+            {
+                "event_id": "evt1", "opp_type": "correlation_arb",
+                "net_profit": 3.0, "roi_pct": 5.0, "required_capital": 60.0,
+                "n_legs": 2, "is_buy_arb": True, "platform": "polymarket",
+                "total_score": 0.90, "profit_score": 0.8, "fill_score": 0.8,
+                "efficiency_score": 0.6, "urgency_score": 0.5,
+                "competition_score": 0.5, "persistence_score": 0.7,
+                "book_depth_ratio": 1.3, "confidence": 0.8,
+                "market_volume": 10000.0, "time_to_resolution_hrs": 48.0,
+                "legs_json": '[{"token_id":"t1","side":"BUY","price":0.40},{"token_id":"t2","side":"BUY","price":0.30}]',
+                "event_title": "Test Event A",
+                "timestamp": time.time(),
+            },
+            {
+                "event_id": "evt1", "opp_type": "correlation_arb",
+                "net_profit": 2.8, "roi_pct": 4.9, "required_capital": 60.0,
+                "n_legs": 2, "is_buy_arb": True, "platform": "polymarket",
+                "total_score": 0.85, "profit_score": 0.7, "fill_score": 0.8,
+                "efficiency_score": 0.6, "urgency_score": 0.5,
+                "competition_score": 0.5, "persistence_score": 0.7,
+                "book_depth_ratio": 1.2, "confidence": 0.8,
+                "market_volume": 10000.0, "time_to_resolution_hrs": 48.0,
+                "legs_json": '[{"token_id":"t1","side":"BUY","price":0.41},{"token_id":"t2","side":"BUY","price":0.29}]',
+                "event_title": "Test Event A",
+                "timestamp": time.time(),
+            },
+            {
+                "event_id": "evt2", "opp_type": "correlation_arb",
+                "net_profit": 1.5, "roi_pct": 3.0, "required_capital": 50.0,
+                "n_legs": 2, "is_buy_arb": True, "platform": "polymarket",
+                "total_score": 0.70, "profit_score": 0.6, "fill_score": 0.7,
+                "efficiency_score": 0.5, "urgency_score": 0.5,
+                "competition_score": 0.5, "persistence_score": 0.6,
+                "book_depth_ratio": 1.1, "confidence": 0.6,
+                "market_volume": 5000.0, "time_to_resolution_hrs": 72.0,
+                "legs_json": '[{"token_id":"t3","side":"BUY","price":0.45},{"token_id":"t4","side":"BUY","price":0.42}]',
+                "event_title": "Test Event B",
+                "timestamp": time.time(),
+            },
+        ]
+        store.insert_opportunities(cid, opps)
+
+        uniq = store.get_unique_actionable(
+            sid,
+            limit=10,
+            min_score=0.0,
+            min_fill_score=0.5,
+            min_persistence=0.5,
+        )
+        assert len(uniq) == 2
+        assert uniq[0]["duplicate_count"] == 2
+        assert "signature_hash" in uniq[0]
+
 
 class TestSafetyRejections:
     def test_insert_and_query(self, store: ReportStore) -> None:

@@ -138,6 +138,75 @@ _ENTITY_PATTERN = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b")
 _ACRONYM_PATTERN = re.compile(r"\b([A-Z]{2,})\b")
 _QUOTED_PATTERN = re.compile(r'"([^"]+)"')
 _YEAR_PATTERN = re.compile(r"20\d{2}")
+_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+_ROMAN_NUMERAL_MAP = {
+    "i": "1",
+    "ii": "2",
+    "iii": "3",
+    "iv": "4",
+    "v": "5",
+    "vi": "6",
+    "vii": "7",
+    "viii": "8",
+    "ix": "9",
+    "x": "10",
+}
+_LEMMA_MAP = {
+    "wins": "win",
+    "won": "win",
+    "winning": "win",
+    "costs": "cost",
+    "costing": "cost",
+    "returns": "return",
+    "returned": "return",
+    "resigns": "resign",
+    "resigned": "resign",
+    "deports": "deport",
+    "deported": "deport",
+    "launches": "launch",
+    "launched": "launch",
+    "captures": "capture",
+    "captured": "capture",
+    "tests": "test",
+    "tested": "test",
+    "confirms": "confirm",
+    "confirmed": "confirm",
+    "approves": "approve",
+    "approved": "approve",
+    "raises": "raise",
+    "raised": "raise",
+    "meets": "meet",
+    "met": "meet",
+    "creates": "create",
+    "created": "create",
+    "invades": "invade",
+    "invaded": "invade",
+    "signs": "sign",
+    "signed": "sign",
+    "postponed": "postpone",
+    "postpones": "postpone",
+}
+_SEMANTIC_STOP_WORDS = _STOP_WORDS - {"win", "wins"}
+_GENERIC_CORE_TOKENS = frozenset(
+    {
+        "market",
+        "markets",
+        "price",
+        "prices",
+        "day",
+        "days",
+        "year",
+        "years",
+        "month",
+        "months",
+        "week",
+        "weeks",
+        "event",
+        "events",
+        "time",
+        "times",
+    }
+)
 
 
 class CorrelationScanner:
@@ -171,6 +240,7 @@ class CorrelationScanner:
         self._min_persistence_cycles = max(1, int(min_persistence_cycles))
         self._max_capital_per_opportunity = max(1.0, max_capital_per_opportunity)
         self._relations: list[MarketRelation] = []
+        self._graph_signature: tuple[tuple[str, str, int, int], ...] = ()
         self._violation_streak: dict[tuple[str, str, str, str], int] = {}
 
     def build_relationship_graph(self, events: list[Event]) -> list[MarketRelation]:
@@ -202,7 +272,26 @@ class CorrelationScanner:
             len(events),
         )
         self._relations = relations
+        self._graph_signature = self._compute_graph_signature(events)
         return list(relations)
+
+    @staticmethod
+    def _compute_graph_signature(events: list[Event]) -> tuple[tuple[str, str, int, int], ...]:
+        """
+        Build an order-independent event signature for graph invalidation.
+        Refreshes relations when event identity/title or market counts change.
+        """
+        return tuple(
+            sorted(
+                (
+                    e.event_id,
+                    e.title,
+                    len(e.markets),
+                    1 if e.neg_risk else 0,
+                )
+                for e in events
+            )
+        )
 
     def scan(
         self,
@@ -214,7 +303,8 @@ class CorrelationScanner:
         Scan for probability constraint violations across related events.
         Returns opportunities where constraints are violated beyond min_edge.
         """
-        if not self._relations:
+        current_signature = self._compute_graph_signature(events)
+        if current_signature != self._graph_signature:
             self.build_relationship_graph(events)
 
         event_map = {e.event_id: e for e in events}
@@ -384,6 +474,14 @@ def _find_temporal_relations(
             )
             if not shared:
                 continue
+            ents1 = entity_map.get(eid1, frozenset())
+            ents2 = entity_map.get(eid2, frozenset())
+            e1 = next((event for event in events if event.event_id == eid1), None)
+            e2 = next((event for event in events if event.event_id == eid2), None)
+            if e1 is None or e2 is None:
+                continue
+            if not _is_semantically_compatible_temporal(e1.title, e2.title, ents1, ents2):
+                continue
 
             # Same month+year → not a temporal pair
             if t1["year"] == t2["year"] and t1["month"] == t2["month"]:
@@ -423,6 +521,8 @@ def _find_parent_child_relations(
                 continue
 
             if ents1 < ents2:
+                if not _is_semantically_compatible_parent_child(e1.title, e2.title, ents1, ents2):
+                    continue
                 # e1 is more general (parent), e2 is more specific (child)
                 relations.append(
                     MarketRelation(
@@ -434,6 +534,8 @@ def _find_parent_child_relations(
                     )
                 )
             elif ents2 < ents1:
+                if not _is_semantically_compatible_parent_child(e2.title, e1.title, ents2, ents1):
+                    continue
                 relations.append(
                     MarketRelation(
                         source_event_id=e2.event_id,
@@ -457,6 +559,95 @@ def _looks_complementary(title1: str, title2: str) -> bool:
         return True
 
     return False
+
+
+def _semantic_core_tokens(title: str, entities: frozenset[str]) -> frozenset[str]:
+    """
+    Extract normalized predicate-ish tokens from a title.
+
+    Strategy:
+    - lowercase + tokenize
+    - normalize roman numerals and common verb inflections
+    - drop stop words, years, month names, and entity words
+    - keep only compact non-trivial signal tokens
+    """
+    month_tokens = set(_MONTHS.keys())
+    entity_words: set[str] = set()
+    for ent in entities:
+        for tok in _TOKEN_PATTERN.findall(ent.lower()):
+            tok = _ROMAN_NUMERAL_MAP.get(tok, tok)
+            if tok:
+                entity_words.add(tok)
+
+    out: set[str] = set()
+    for raw in _TOKEN_PATTERN.findall(title.lower()):
+        tok = _ROMAN_NUMERAL_MAP.get(raw, raw)
+        tok = _LEMMA_MAP.get(tok, tok)
+        if tok in month_tokens:
+            continue
+        if _YEAR_PATTERN.fullmatch(tok):
+            continue
+        if tok in _SEMANTIC_STOP_WORDS:
+            continue
+        if tok in entity_words:
+            continue
+        if len(tok) <= 1:
+            continue
+        out.add(tok)
+    return frozenset(out)
+
+
+def _has_meaningful_shared_tokens(a: frozenset[str], b: frozenset[str]) -> bool:
+    shared = a & b
+    if not shared:
+        return False
+    meaningful = {
+        t
+        for t in shared
+        if t not in _GENERIC_CORE_TOKENS and not t.isdigit() and len(t) >= 2
+    }
+    return bool(meaningful)
+
+
+def _is_semantically_compatible_parent_child(
+    parent_title: str,
+    child_title: str,
+    parent_entities: frozenset[str],
+    child_entities: frozenset[str],
+) -> bool:
+    """
+    Parent/child relations must share proposition-level semantics, not just
+    entity overlap. This blocks unrelated pairs like:
+      "Will GTA 6 cost $100+?" vs "Will Jesus Christ return before GTA VI?"
+    """
+    parent_core = _semantic_core_tokens(parent_title, parent_entities)
+    child_core = _semantic_core_tokens(child_title, child_entities)
+    if not parent_core or not child_core:
+        return False
+    if not _has_meaningful_shared_tokens(parent_core, child_core):
+        return False
+    overlap = len(parent_core & child_core) / max(1, min(len(parent_core), len(child_core)))
+    return overlap >= 0.5
+
+
+def _is_semantically_compatible_temporal(
+    earlier_title: str,
+    later_title: str,
+    earlier_entities: frozenset[str],
+    later_entities: frozenset[str],
+) -> bool:
+    """
+    Temporal relations should represent the *same proposition* across two
+    deadlines. Require stronger core overlap than parent-child.
+    """
+    earlier_core = _semantic_core_tokens(earlier_title, earlier_entities)
+    later_core = _semantic_core_tokens(later_title, later_entities)
+    if not earlier_core or not later_core:
+        return False
+    if not _has_meaningful_shared_tokens(earlier_core, later_core):
+        return False
+    overlap = len(earlier_core & later_core) / max(1, min(len(earlier_core), len(later_core)))
+    return overlap >= 0.7
 
 
 # ---------------------------------------------------------------------------

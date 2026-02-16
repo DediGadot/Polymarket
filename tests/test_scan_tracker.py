@@ -238,3 +238,31 @@ class TestLaneSplit:
         s = t.summary()
         assert s["executable_opp_count"] == 1
         assert s["research_opp_count"] == 1
+
+
+class TestOpportunityDedupWindow:
+    def test_repeats_counted_inside_window(self):
+        t = ScanTracker(dedup_window_sec=60.0)
+        opp = _make_opp(event_id="evt_dup", net_profit=7.0, roi_pct=3.5)
+
+        t.record_cycle(1, 100, [opp])
+        t.record_cycle(2, 100, [opp])  # same fingerprint within 60s
+
+        s = t.summary()
+        assert s["opportunities_found"] == 2
+        assert s["unique_opportunities_found"] == 1
+        assert s["repeated_opportunities_found"] == 1
+        assert s["unique_opportunity_profit_usd"] == 7.0
+        assert s["repeated_opportunity_profit_usd"] == 7.0
+
+    def test_repeats_not_counted_when_window_disabled(self):
+        t = ScanTracker(dedup_window_sec=0.0)
+        opp = _make_opp(event_id="evt_dup2", net_profit=4.0, roi_pct=2.0)
+
+        t.record_cycle(1, 100, [opp])
+        t.record_cycle(2, 100, [opp])
+
+        s = t.summary()
+        assert s["opportunities_found"] == 2
+        assert s["unique_opportunities_found"] == 2
+        assert s["repeated_opportunities_found"] == 0
